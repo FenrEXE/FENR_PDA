@@ -1,0 +1,6 @@
+Fenrir Industries PDA
+
+Copyright: Fenr.EXE
+Maintainer: Fenr.EXE
+
+Project source identity: Fenrir Industries PDA
