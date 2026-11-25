@@ -3,21 +3,14 @@
     Copyright: Fenr.EXE
     Maintainer: Fenr.EXE
 
-    Server boundary: RPC dispatch, online-player lookup, PDA validation and the
-    lightweight test-account harness. Domain logic is delegated to Messages,
-    Groups, Storage and Admin.
+    Server boundary: RPC dispatch, online-player lookup, PDA validation and
+    request throttling.  Domain logic is delegated to Messages, Groups,
+    Storage and Admin.
 */
 
 class FENR_PDA_Server extends PluginBase
 {
     EffectSound m_MessageSound;
-
-    static const string TEST_ID_1 = "PDA_TEST_001";
-    static const string TEST_ID_2 = "PDA_TEST_002";
-    static const string TEST_ID_3 = "PDA_TEST_003";
-    static const string TEST_NAME_1 = "Test User 1";
-    static const string TEST_NAME_2 = "Test User 2";
-    static const string TEST_NAME_3 = "Test User 3";
 
     override void OnInit()
     {
@@ -27,7 +20,6 @@ class FENR_PDA_Server extends PluginBase
         RegisterRpc(FENR_PDA_Rpc.ADD_CONTACT);
         RegisterRpc(FENR_PDA_Rpc.CHECK_CONTACTS);
         RegisterRpc(FENR_PDA_Rpc.SEND_MESSAGE);
-        RegisterRpc(FENR_PDA_Rpc.SYNC_TEST_ACCOUNTS);
         RegisterRpc(FENR_PDA_Rpc.NETWORK_STATUS);
         RegisterRpc(FENR_PDA_Rpc.PDA_USAGE);
         RegisterRpc(FENR_PDA_Rpc.PDA_NOTICE);
@@ -103,12 +95,6 @@ class FENR_PDA_Server extends PluginBase
             FENR_PDA_Power.Init();
             FENR_PDA_BountyBoard.Init();
         }
-
-        if (GetGame().IsClient())
-        {
-            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.USER_ID, new Param1<string>(""), true);
-            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.SYNC_TEST_ACCOUNTS, new Param1<bool>(true), true);
-        }
     }
 
     protected void RegisterRpc(string rpcName)
@@ -165,6 +151,10 @@ class FENR_PDA_Server extends PluginBase
     {
         if (!identity)
             return null;
+        // Direct link from the identity; the player scan is only a fallback.
+        PlayerBase player = PlayerBase.Cast(identity.GetPlayer());
+        if (player)
+            return player;
         return FindOnlinePlayer(identity.GetPlainId());
     }
 
@@ -258,6 +248,38 @@ class FENR_PDA_Server extends PluginBase
         return true;
     }
 
+    // Shared buckets for requests that have no dedicated limit.  Generous:
+    // a person clicking through the PDA never reaches them.
+    static bool AllowRead(PlayerIdentity identity)
+    {
+        return Throttle(identity, "READ", 40, 10);
+    }
+
+    static bool AllowWrite(PlayerIdentity identity)
+    {
+        return Throttle(identity, "WRITE", 20, 4);
+    }
+
+    // A player left: drop their throttle state.
+    static void ForgetPlayer(string steam64)
+    {
+        if (steam64 == "" || !s_Tokens)
+            return;
+        string prefix = steam64 + "|";
+        array<string> keys = new array<string>();
+        for (int i = 0; i < s_Tokens.Count(); i++)
+        {
+            string key = s_Tokens.GetKey(i);
+            if (key.IndexOf(prefix) == 0)
+                keys.Insert(key);
+        }
+        foreach (string oldKey : keys)
+        {
+            s_Tokens.Remove(oldKey);
+            s_TokenTime.Remove(oldKey);
+        }
+    }
+
     // Short HUD notice for a refused request.
     static void Deny(PlayerIdentity identity, string text)
     {
@@ -321,82 +343,16 @@ class FENR_PDA_Server extends PluginBase
         return false;
     }
 
-    // ---------------------------------------------------------------------
-    // Test accounts
-    // ---------------------------------------------------------------------
-    static bool TestAccountsEnabled()
+    // v8.8: the developer test accounts (PDA_TEST_00x) were removed.  Stored
+    // contacts and group members with those IDs are dropped on load.
+    static bool IsRetiredID(string id)
     {
-        return FENR_PDA_Storage.TestAccountsEnabled();
-    }
-
-    static bool IsTestAccount(string id)
-    {
-        return id == TEST_ID_1 || id == TEST_ID_2 || id == TEST_ID_3;
-    }
-
-    static string TestAccountName(string id)
-    {
-        if (id == TEST_ID_1) return TEST_NAME_1;
-        if (id == TEST_ID_2) return TEST_NAME_2;
-        if (id == TEST_ID_3) return TEST_NAME_3;
-        return "";
-    }
-
-    static bool ResolveTestAccount(string lookup, out string id, out string name)
-    {
-        id = "";
-        name = "";
-        if (!TestAccountsEnabled())
-            return false;
-
-        if (lookup == TEST_ID_1 || lookup == TEST_NAME_1) { id = TEST_ID_1; name = TEST_NAME_1; return true; }
-        if (lookup == TEST_ID_2 || lookup == TEST_NAME_2) { id = TEST_ID_2; name = TEST_NAME_2; return true; }
-        if (lookup == TEST_ID_3 || lookup == TEST_NAME_3) { id = TEST_ID_3; name = TEST_NAME_3; return true; }
-        return false;
-    }
-
-    static void FillTestAccounts(array<string> ids, array<string> names)
-    {
-        if (!ids || !names)
-            return;
-        ids.Clear();
-        names.Clear();
-        if (!TestAccountsEnabled())
-            return;
-
-        ids.Insert(TEST_ID_1); names.Insert(TEST_NAME_1);
-        ids.Insert(TEST_ID_2); names.Insert(TEST_NAME_2);
-        ids.Insert(TEST_ID_3); names.Insert(TEST_NAME_3);
+        return id.IndexOf("PDA_TEST_") == 0;
     }
 
     // ---------------------------------------------------------------------
     // Core / contacts / direct messages
     // ---------------------------------------------------------------------
-    void SyncTestAccounts(CallType type, ref ParamsReadContext ctx, ref PlayerIdentity sender, ref Object target)
-    {
-        if (type == CallType.Server)
-        {
-            ref array<string> ids = new array<string>();
-            ref array<string> names = new array<string>();
-            FillTestAccounts(ids, names);
-            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.SYNC_TEST_ACCOUNTS, new Param2<ref array<string>, ref array<string>>(ids, names), true, sender);
-            return;
-        }
-
-        Param2<ref array<string>, ref array<string>> data;
-        if (!ctx.Read(data))
-            return;
-
-        FENR_PDA_Client client = ClientState();
-        if (!client)
-            return;
-
-        client.SetTestContacts(data.param1, data.param2);
-
-        if (client.IsOpen() && client.m_Menu)
-            client.m_Menu.m_dirty = true;
-    }
-
     void SendMessage(CallType type, ref ParamsReadContext ctx, ref PlayerIdentity sender, ref Object target)
     {
         if (type == CallType.Server)
@@ -457,12 +413,15 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            Param1<array<string>> request;
-            if (!ctx.Read(request))
+            // The request's list is ignored: only the logged-in player's own
+            // contacts are checked.
+            if (!sender || !AllowRead(sender))
                 return;
 
+            ref array<string> contactIDs = new array<string>();
+            FENR_PDA_AccountStore.ContactIDs(sender, contactIDs);
             ref array<string> result = new array<string>();
-            FENR_PDA_Messages.BuildOnlineContactIds(request.param1, result);
+            FENR_PDA_Messages.BuildOnlineContactIds(contactIDs, result);
             GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.CHECK_CONTACTS, new Param1<ref array<string>>(result), true, sender);
             return;
         }
@@ -484,7 +443,7 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            if (sender)
+            if (sender && AllowRead(sender))
             {
                 FENR_PDA_Storage.RememberIdentity(sender);
                 GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.USER_ID, new Param1<string>(sender.GetName()), true, sender);
@@ -504,8 +463,9 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
+            // Finding players by name needs a logged-in PDA.
             Param1<string> request;
-            if (!ctx.Read(request))
+            if (!sender || !ctx.Read(request) || !AllowRead(sender) || !FENR_PDA_Sessions.AccessOf(sender))
                 return;
 
             string id;
@@ -531,22 +491,15 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            if (!sender)
+            if (!sender || !AllowRead(sender))
                 return;
 
-            int pdaUsers = 0;
-            int playerCount = 0;
             ref array<Man> players = new array<Man>();
             GetGame().GetPlayers(players);
-            foreach (Man man : players)
-            {
-                PlayerBase player = PlayerBase.Cast(man);
-                if (!player || !player.GetIdentity())
-                    continue;
-                playerCount++;
-                if (FENR_PDA_Sessions.ActiveDevice(player))
-                    pdaUsers++;
-            }
+            int playerCount = players.Count();
+            ref array<PlayerBase> holders = new array<PlayerBase>();
+            FENR_PDA_Sessions.LiveHolders(holders);
+            int pdaUsers = holders.Count();
             GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.NETWORK_STATUS, new Param2<int, int>(pdaUsers, playerCount), true, sender);
             return;
         }
@@ -566,7 +519,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param2<string, int> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
             int total = 0;
             int pageOut = 0;
@@ -654,7 +607,7 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            if (sender && FENR_PDA_Sessions.AccessOf(sender))
+            if (sender && AllowRead(sender) && FENR_PDA_Sessions.AccessOf(sender))
                 SendDriveStatus(sender);
             return;
         }
@@ -669,7 +622,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param1<string> request;
-        if (!ctx.Read(request))
+        if (!ctx.Read(request) || !AllowRead(sender))
             return;
         string info = "Log in to your PDA first.";
         ref array<string> payload = new array<string>();
@@ -697,7 +650,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param1<int> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
             string info = "Log in to your PDA first.";
             ref array<string> fields = new array<string>();
@@ -721,7 +674,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param2<string, string> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
             ref array<string> fields = new array<string>();
             FENR_PDA_DriveService.Source(sender, request.param1, request.param2, fields);
@@ -768,7 +721,7 @@ class FENR_PDA_Server extends PluginBase
     // refused with DeviceResync.
     // ---------------------------------------------------------------------
     // Sends the session state, then the memory of the logged-in player.
-    protected void SendDeviceSync(PlayerIdentity identity, string terrain)
+    protected void SendDeviceSync(PlayerIdentity identity)
     {
         if (!identity)
             return;
@@ -781,7 +734,7 @@ class FENR_PDA_Server extends PluginBase
         ref array<string> markerFields = new array<string>();
         string notes;
         bool isNew;
-        string token = FENR_PDA_AccountStore.BuildSync(identity, terrain, contactFields, notes, markerFields, isNew);
+        string token = FENR_PDA_AccountStore.BuildSync(identity, contactFields, notes, markerFields, isNew);
         GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.DEVICE_SYNC, new Param5<string, ref array<string>, string, ref array<string>, bool>(token, contactFields, notes, markerFields, isNew), true, identity);
     }
 
@@ -791,10 +744,11 @@ class FENR_PDA_Server extends PluginBase
         {
             if (!sender)
                 return;
+            // param1 (the client's map name) is ignored since v8.8.
             Param1<string> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
-            SendDeviceSync(sender, request.param1);
+            SendDeviceSync(sender);
             return;
         }
 
@@ -860,7 +814,7 @@ class FENR_PDA_Server extends PluginBase
             info = "";
         if (info != "")
             Deny(sender, info);
-        SendDeviceSync(sender, request.param2);
+        SendDeviceSync(sender);
     }
 
     // Client -> server: terrain.
@@ -869,7 +823,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param1<string> request;
-        if (!ctx.Read(request))
+        if (!ctx.Read(request) || !AllowWrite(sender))
             return;
         string info;
         if (!FENR_PDA_Sessions.Logout(sender, info))
@@ -884,7 +838,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param2<string, string> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
             ref array<string> fields = new array<string>();
             FENR_PDA_AccountStore.ConvoFields(sender, request.param1, request.param2, fields);
@@ -905,7 +859,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param4<string, string, string, string> request;
-        if (ctx.Read(request))
+        if (ctx.Read(request) && AllowWrite(sender))
             FENR_PDA_AccountStore.ContactOp(sender, request.param1, request.param2, request.param3, request.param4);
     }
 
@@ -914,7 +868,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param2<string, string> request;
-        if (ctx.Read(request))
+        if (ctx.Read(request) && AllowWrite(sender))
             FENR_PDA_AccountStore.SaveNotes(sender, request.param1, request.param2);
     }
 
@@ -922,9 +876,10 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type != CallType.Server || !sender)
             return;
+        // param2 (the client's map name) is ignored since v8.8.
         Param3<string, string, ref array<string>> request;
-        if (ctx.Read(request))
-            FENR_PDA_AccountStore.SaveMarkers(sender, request.param1, request.param2, request.param3);
+        if (ctx.Read(request) && AllowWrite(sender))
+            FENR_PDA_AccountStore.SaveMarkers(sender, request.param1, request.param3);
     }
 
     // Server -> client: the PDA in hands changed (or locked); reload.
@@ -950,8 +905,8 @@ class FENR_PDA_Server extends PluginBase
             if (!Throttle(sender, "HUD", 3, 0.2))
                 return;
             ref array<string> fields = new array<string>();
-            FENR_PDA_AccountStore.HudMarkers(sender, request.param1, fields);
-            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.DEVICE_HUD, new Param2<string, ref array<string>>(request.param1, fields), true, sender);
+            FENR_PDA_AccountStore.HudMarkers(sender, fields);
+            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.DEVICE_HUD, new Param2<string, ref array<string>>(FENR_PDA_Storage.WorldName(), fields), true, sender);
             return;
         }
 
@@ -973,7 +928,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param1<string> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
             string mode;
             string groupID;
@@ -994,7 +949,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param4<string, string, ref array<string>, string> request;
-        if (ctx.Read(request))
+        if (ctx.Read(request) && AllowWrite(sender))
             FENR_PDA_AccountStore.SetSos(sender, request.param1, request.param2, request.param3, request.param4);
     }
 
@@ -1056,7 +1011,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param1<int> request;
-        if (ctx.Read(request))
+        if (ctx.Read(request) && AllowWrite(sender))
             FENR_PDA_Power.SetUsage(sender, request.param1);
     }
 
@@ -1070,7 +1025,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param3<string, int, string> request;
-            if (!ctx.Read(request))
+            if (!ctx.Read(request) || !AllowRead(sender))
                 return;
 
             int total = 0;
@@ -1128,7 +1083,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param1<string> request;
-        if (!ctx.Read(request) || !RequireDevice(sender))
+        if (!ctx.Read(request) || !AllowWrite(sender) || !RequireDevice(sender))
             return;
         string ownerID = FENR_PDA_Trade.OwnerOf(request.param1);
         if (ownerID != "")
@@ -1154,7 +1109,7 @@ class FENR_PDA_Server extends PluginBase
             if (!sender)
                 return;
             Param1<string> request;
-            if (ctx.Read(request))
+            if (ctx.Read(request) && AllowRead(sender))
                 SendRep(sender, request.param1);
             return;
         }
@@ -1169,7 +1124,7 @@ class FENR_PDA_Server extends PluginBase
         if (type != CallType.Server || !sender)
             return;
         Param2<string, int> request;
-        if (!ctx.Read(request) || !RequireDevice(sender))
+        if (!ctx.Read(request) || !AllowWrite(sender) || !RequireDevice(sender))
             return;
 
         string info;
@@ -1194,9 +1149,9 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            // The admin panel only opens on the admin's own logged-in PDA.
-            FENR_PDA_Access adminAccess = FENR_PDA_Sessions.AccessOf(sender);
-            bool isAdmin = adminAccess && adminAccess.IsOwner && FENR_PDA_Admin.IsAuthorized(sender);
+            if (!AllowRead(sender))
+                return;
+            bool isAdmin = IsAdminSession(sender);
             GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.ADMIN_STATUS, new Param2<bool, string>(isAdmin, FENR_PDA_Storage.RetentionSummary()), true, sender);
             return;
         }
@@ -1206,16 +1161,31 @@ class FENR_PDA_Server extends PluginBase
             FENR_PDA_Menu.GetInstance().AdminReceiveStatus(data.param1, data.param2);
     }
 
+    // The admin panel only works on the admin's own logged-in PDA.
+    static bool IsAdminSession(PlayerIdentity identity)
+    {
+        if (!identity)
+            return false;
+        FENR_PDA_Access access = FENR_PDA_Sessions.AccessOf(identity);
+        return access && access.IsOwner && FENR_PDA_Admin.IsAuthorized(identity);
+    }
+
     void AdminSearchMessages(CallType type, ref ParamsReadContext ctx, ref PlayerIdentity sender, ref Object target)
     {
         if (type == CallType.Server)
         {
-            if (!FENR_PDA_Admin.IsAuthorized(sender))
+            // Searching reads the message log: limited per admin.
+            if (!IsAdminSession(sender))
                 return;
 
             Param3<string, string, int> request;
             if (!ctx.Read(request))
                 return;
+            if (!Throttle(sender, "ADMIN_SEARCH", 3, 0.5))
+            {
+                Deny(sender, "Searching too fast. Wait a moment.");
+                return;
+            }
 
             int page = request.param3;
             if (page < 0) page = 0;
@@ -1236,7 +1206,7 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            if (!FENR_PDA_Admin.IsAuthorized(sender))
+            if (!AllowRead(sender) || !IsAdminSession(sender))
                 return;
             ref array<string> ids = new array<string>();
             ref array<string> rows = new array<string>();
@@ -1257,7 +1227,9 @@ class FENR_PDA_Server extends PluginBase
             Param1<string> request;
             if (!ctx.Read(request) || !RequireDevice(sender))
                 return;
-            bool success = FENR_PDA_Admin.Broadcast(sender, request.param1);
+            bool success = false;
+            if (Throttle(sender, "BROADCAST", 2, 0.1))
+                success = FENR_PDA_Admin.Broadcast(sender, request.param1);
             GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.ADMIN_BROADCAST, new Param1<bool>(success), true, sender);
             return;
         }
@@ -1289,7 +1261,7 @@ class FENR_PDA_Server extends PluginBase
     {
         if (type == CallType.Server)
         {
-            if (!sender) return;
+            if (!sender || !AllowRead(sender)) return;
             ref array<string> ids = new array<string>();
             ref array<string> names = new array<string>();
             ref array<string> ownerIDs = new array<string>();
@@ -1322,7 +1294,11 @@ class FENR_PDA_Server extends PluginBase
         Param1<string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string groupID, info;
-        bool success = FENR_PDA_Groups.CreateGroup(sender, request.param1, groupID, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.CreateGroup(sender, request.param1, groupID, info);
         SendGroupActionResult(sender, "CREATE", success, info, groupID);
     }
 
@@ -1332,7 +1308,11 @@ class FENR_PDA_Server extends PluginBase
         Param2<string, string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string info;
-        bool success = FENR_PDA_Groups.RenameGroup(sender, request.param1, request.param2, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.RenameGroup(sender, request.param1, request.param2, info);
         SendGroupActionResult(sender, "RENAME", success, info, request.param1);
     }
 
@@ -1342,7 +1322,11 @@ class FENR_PDA_Server extends PluginBase
         Param1<string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string info;
-        bool success = FENR_PDA_Groups.DeleteGroup(sender, request.param1, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.DeleteGroup(sender, request.param1, info);
         SendGroupActionResult(sender, "DELETE", success, info, "");
     }
 
@@ -1352,7 +1336,11 @@ class FENR_PDA_Server extends PluginBase
         Param1<string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string info;
-        bool success = FENR_PDA_Groups.LeaveGroup(sender, request.param1, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.LeaveGroup(sender, request.param1, info);
         SendGroupActionResult(sender, "LEAVE", success, info, "");
     }
 
@@ -1362,7 +1350,11 @@ class FENR_PDA_Server extends PluginBase
         Param3<string, string, string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string info;
-        bool success = FENR_PDA_Groups.AddMember(sender, request.param1, request.param2, request.param3, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.AddMember(sender, request.param1, request.param2, request.param3, info);
         SendGroupActionResult(sender, "ADD_MEMBER", success, info, request.param1);
     }
 
@@ -1372,7 +1364,11 @@ class FENR_PDA_Server extends PluginBase
         Param2<string, string> request;
         if (!ctx.Read(request) || !RequireDevice(sender)) return;
         string info;
-        bool success = FENR_PDA_Groups.RemoveMember(sender, request.param1, request.param2, info);
+        bool success = false;
+        if (!AllowWrite(sender))
+            info = "Too fast. Wait a moment.";
+        else
+            success = FENR_PDA_Groups.RemoveMember(sender, request.param1, request.param2, info);
         SendGroupActionResult(sender, "REMOVE_MEMBER", success, info, request.param1);
     }
 
@@ -1381,7 +1377,7 @@ class FENR_PDA_Server extends PluginBase
         if (type == CallType.Server)
         {
             Param1<string> request;
-            if (!ctx.Read(request) || !sender) return;
+            if (!sender || !ctx.Read(request) || !AllowRead(sender)) return;
             FENR_PDA_Group group = FENR_PDA_Groups.FindGroup(request.param1);
             string memberViewer = ViewerID(sender);
             if (!group || !FENR_PDA_Groups.HasMemberID(group, memberViewer)) return;
@@ -1409,7 +1405,7 @@ class FENR_PDA_Server extends PluginBase
         if (type == CallType.Server)
         {
             Param1<string> request;
-            if (!ctx.Read(request) || !sender) return;
+            if (!sender || !ctx.Read(request) || !AllowRead(sender)) return;
             FENR_PDA_Group group = FENR_PDA_Groups.FindGroup(request.param1);
             FENR_PDA_Access access = FENR_PDA_Sessions.AccessOf(sender);
             if (!group || !access || !FENR_PDA_Groups.HasMemberID(group, access.OwnerID)) return;
@@ -1459,15 +1455,15 @@ class FENR_PDA_Server extends PluginBase
     void GroupIncomingMessage(CallType type, ref ParamsReadContext ctx, ref PlayerIdentity sender, ref Object target)
     {
         if (type != CallType.Client) return;
-        Param4<string, string, string, string> data;
+        // group ID, group name, sender name, text, own (written by the
+        // player this PDA is logged in as)
+        Param5<string, string, string, string, bool> data;
         if (!ctx.Read(data))
             return;
         if (FENR_PDA_Menu.GetInstance())
             FENR_PDA_Menu.GetInstance().GroupReceiveIncoming(data.param1, data.param2, data.param3, data.param4);
 
-        FENR_PDA_Client client = ClientState();
-        bool ownMessage = client && client.m_UserDisplayName != "" && data.param3 == client.m_UserDisplayName;
-        if (!ownMessage && data.param3 != "SYSTEM")
+        if (!data.param5 && data.param3 != "SYSTEM")
             FENR_PDA_Toast.Notify("GROUP / " + data.param2, data.param3, data.param4, "ic_groups", FENR_PDA_SettingsStore.SoundAllowed(FENR_PDA_SettingsStore.SOUND_GROUP, FENR_PDA_SettingsStore.GroupKey(data.param1)));
     }
 

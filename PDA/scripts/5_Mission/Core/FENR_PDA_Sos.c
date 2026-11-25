@@ -55,23 +55,6 @@ class FENR_PDA_Sos
         return true;
     }
 
-    // The powered PDA logged in as this player (hands first).
-    protected static FENR_PDA_Device OwnDevice(PlayerBase player, string steam64)
-    {
-        FENR_PDA_Device hands = FENR_PDA_Device.Cast(player.GetItemInHands());
-        if (hands && FENR_PDA_Server.IsWorkingDevice(hands) && FENR_PDA_Sessions.OwnerOf(hands) == steam64)
-            return hands;
-        array<EntityAI> inventory = new array<EntityAI>();
-        player.GetInventory().EnumerateInventory(InventoryTraversalType.PREORDER, inventory);
-        foreach (EntityAI entity : inventory)
-        {
-            FENR_PDA_Device candidate = FENR_PDA_Device.Cast(entity);
-            if (candidate && FENR_PDA_Server.IsWorkingDevice(candidate) && FENR_PDA_Sessions.OwnerOf(candidate) == steam64)
-                return candidate;
-        }
-        return null;
-    }
-
     // Ruins the PDA and everything attached to it.
     protected static void BurnOut(FENR_PDA_Device device)
     {
@@ -112,7 +95,7 @@ class FENR_PDA_Sos
         }
         // The PDA used (and burned) must be powered and logged in as the sender.
         string senderID = sender.GetPlainId();
-        FENR_PDA_Device device = OwnDevice(player, senderID);
+        FENR_PDA_Device device = FENR_PDA_Sessions.OwnDevice(player, senderID);
         if (!device)
         {
             info = "Log in to your PDA to send an S.O.S.";
@@ -144,7 +127,7 @@ class FENR_PDA_Sos
             FENR_PDA_Groups.SendMessage(sender, meta.SosGroup, text, result);
             foreach (FENR_PDA_GroupMember member : group.Members)
             {
-                if (!member || FENR_PDA_Server.IdentityMatches(sender, member.ID) || FENR_PDA_Server.IsTestAccount(member.ID))
+                if (!member || FENR_PDA_Server.IdentityMatches(sender, member.ID))
                     continue;
                 notified++;
                 if (AlertRecipient(member.ID, sender.GetName(), pos, minutes, senderID))
@@ -162,7 +145,7 @@ class FENR_PDA_Sos
             foreach (string target : meta.SosTargets)
             {
                 if (notified >= limit) break;
-                if (target == "" || FENR_PDA_Server.IsTestAccount(target)) continue;
+                if (target == "") continue;
                 notified++;
                 FENR_PDA_Messages.SendSystemDirect(sender, player, target, text);
                 if (AlertRecipient(target, sender.GetName(), pos, minutes, senderID))

@@ -4,6 +4,47 @@ All notable changes to **Fenrir Industries PDA**, from v8.1 onward.
 
 ---
 
+## v8.8 — Backend hardening and performance
+
+### Security
+- **Map names come from the server.** Markers are saved, synced and shown on the compass under the server's own map name; the client's map name is ignored, so a modified client can no longer create unlimited marker sets. Marker coordinates outside the map are dropped.
+- **Contact online status** is checked against the logged-in player's stored contacts only. Clients can no longer ask about arbitrary Steam64 IDs.
+- **Battery drain is decided by the server.** A powered PDA in hands drains at the "open" rate whatever the client reports; the client report can only add to it (map view). Note: holding a powered PDA in hands with the screen closed now drains too.
+- **Request limits** on every PDA request (shared read and write limits, plus dedicated limits for admin search and broadcasts). Normal use never reaches them.
+- **Admin search and player list** need the admin's own logged-in PDA, like the rest of the admin panel.
+- Adding a contact by name needs a logged-in PDA.
+- Direct messages only go to player IDs.
+
+### Fixed
+- **Group notifications** used display names to spot your own messages, so two players with the same name missed each other's toasts. The server now marks own messages by player ID.
+- Rewriting or wiping an **Intel Drive** left its admin-written intel file in `IntelFiles.json` forever.
+- A rejected **bounty** claimer could re-claim straight away and spam the poster. The rejected player can no longer claim that bounty.
+- "No bounty on yourself" also checks the player behind the name, so renaming no longer gets around it.
+- Completed bounties and closed listings no longer count toward the board limits (300 / 500); the oldest one makes room.
+- Finding a player by name picks the most recently seen player with that name.
+
+### Performance
+- Player lookups use the identity's player directly instead of scanning every player.
+- Live traffic, the network status counter, server bounty notices and the admin player list use the session map instead of scanning inventories. Network status used to scan every player's inventory on every request.
+- The access check is computed once per request instead of up to three times.
+- Admin message search keeps its results for a minute, so paging does not re-read the log.
+- The log file registry uses a lookup table (it was scanned on every log line).
+- Groups and group histories are saved every 30 s and when the server stops, instead of on every message and change. Group lookups use a table.
+- VPP admin checks are cached for a minute.
+- Per-player request state is cleared when a player disconnects.
+
+### Removed
+- **Developer test accounts** (`PDA_TEST_001`–`003`) and `TestAccountsEnabled`. Stored test contacts and group members are dropped on load.
+- Duplicate online-status and test-account requests when the PDA opens.
+
+### Changed
+- Trade and bounty boards share one helper for text cleanup, IDs and paging.
+- Server settings are read through one accessor.
+
+> **Server owners:** nothing to migrate. `TestAccountsEnabled` disappears from `FenrirIndustriesPDA.json` on the next start. Clients and server must both run v8.8 (the group message format changed).
+
+---
+
 ## v8.7 — Flash Drive removed
 
 ### Removed

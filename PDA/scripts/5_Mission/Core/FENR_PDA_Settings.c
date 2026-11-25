@@ -34,8 +34,6 @@ class FENR_PDA_SettingsStore
 
     protected static void Normalize()
     {
-        if (!s_Settings.HiddenTestContacts)
-            s_Settings.HiddenTestContacts = new array<string>();
         if (!s_Settings.MutedChats)
             s_Settings.MutedChats = new array<string>();
         if (!s_Settings.MutedNames)

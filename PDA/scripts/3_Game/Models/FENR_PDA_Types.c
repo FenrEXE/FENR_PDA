@@ -166,6 +166,7 @@ class FENR_PDA_Bounty
 {
     string ID;
     string TargetName;
+    string TargetID;      // v8.8: Steam64 of the last player seen with that name ("" = unknown)
     string Reward;
     string Reason;
     string PosterID;
@@ -175,6 +176,7 @@ class FENR_PDA_Bounty
     string ClaimerID;
     string ClaimerName;
     string ClaimNote;
+    string RejectedID;    // v8.8: last claimer whose claim was rejected (cannot claim again)
     string Created;
     int CreatedSerial;
 };
@@ -323,8 +325,6 @@ class FENR_PDA_IntelFile
 
 class FENR_PDA_Config
 {
-    bool TestAccountsEnabled = true;
-
     bool TradeEnabled = true;
     int TradeMaxListingsPerPlayer = 5;
     int TradeListingDays = 7;
@@ -395,8 +395,6 @@ class FENR_PDA_Settings
 
     int LoginHours = 2;         // last session length chosen on the login screen
 
-    ref array<string> HiddenTestContacts;   // developer test accounts the player removed
-
     // Sounds (v8.5).  Muting only silences the sound; pop-ups and unread
     // counts stay.
     bool SoundChats = true;          // all chat traffic (master switch)
@@ -411,7 +409,6 @@ class FENR_PDA_Settings
 
     void FENR_PDA_Settings()
     {
-        HiddenTestContacts = new array<string>();
         MutedChats = new array<string>();
         MutedNames = new array<string>();
     }
@@ -433,11 +430,6 @@ class FENR_PDA_LegacyLogConfig
     int AdminLogsDays = 90;
     int CleanupIntervalHours = 24;
     int SearchResultsPerPage = 25;
-};
-
-class FENR_PDA_LegacyTestConfig
-{
-    bool Enabled = true;
 };
 
 class FENR_PDA_LogFileRecord
@@ -484,8 +476,7 @@ class FENR_PDA_MessageRecord
     string Timestamp;
     string Type;
 
-    // For real players these fields use Steam64 (PlayerIdentity.GetPlainId()).
-    // Test accounts keep their explicit FENR test IDs.
+    // Steam64 (PlayerIdentity.GetPlainId()).
     string SenderSteam64;
     string SenderName;
 

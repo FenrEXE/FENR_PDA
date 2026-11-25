@@ -68,10 +68,6 @@ class FENR_PDA_Client extends PluginBase
 
     ref array<ref FENR_PDA_SosPing> m_SosPings;
 
-    // Developer test accounts (re-added after every sync, never saved).
-    ref array<string> m_TestIds;
-    ref array<string> m_TestNames;
-
     void FENR_PDA_Client()
     {
         m_Contacts = new array<ref FENR_PDA_Contact>();
@@ -80,8 +76,6 @@ class FENR_PDA_Client extends PluginBase
         m_PendingConvos = new array<string>();
         m_Notes = new FENR_PDA_Note();
         m_Markers = new array<ref FENR_PDA_MapMarker>();
-        m_TestIds = new array<string>();
-        m_TestNames = new array<string>();
         m_SosPings = new array<ref FENR_PDA_SosPing>();
         m_MarkerTerrain = "";
 
@@ -125,29 +119,6 @@ class FENR_PDA_Client extends PluginBase
         string world;
         GetGame().GetWorldName(world);
         return world;
-    }
-
-    bool IsTestContact(string contactId)
-    {
-        return m_TestIds.Find(contactId) != -1;
-    }
-
-    // Test accounts are re-added on every sync unless the player removed them.
-    bool IsHiddenTest(string contactId)
-    {
-        FENR_PDA_Settings settings = FENR_PDA_SettingsStore.Get();
-        return settings && settings.HiddenTestContacts && settings.HiddenTestContacts.Find(contactId) != -1;
-    }
-
-    protected void SetTestHidden(string contactId, bool hidden)
-    {
-        FENR_PDA_Settings settings = FENR_PDA_SettingsStore.Get();
-        if (!settings || !settings.HiddenTestContacts) return;
-        int index = settings.HiddenTestContacts.Find(contactId);
-        if (hidden && index == -1) settings.HiddenTestContacts.Insert(contactId);
-        else if (!hidden && index != -1) settings.HiddenTestContacts.Remove(index);
-        else return;
-        FENR_PDA_SettingsStore.Save();
     }
 
     // ------------------------------------------------------------------
@@ -342,13 +313,6 @@ class FENR_PDA_Client extends PluginBase
                 MigrateLegacy();
         }
 
-        // Developer test accounts are session-only.
-        for (int t = 0; t < m_TestIds.Count() && t < m_TestNames.Count(); t++)
-        {
-            if (!FindContact(m_TestIds[t]) && !IsHiddenTest(m_TestIds[t]))
-                m_Contacts.Insert(new FENR_PDA_Contact(m_TestIds[t], m_TestNames[t], true));
-        }
-
         RequestContactStatusRefresh();
         if (m_Menu)
         {
@@ -415,7 +379,7 @@ class FENR_PDA_Client extends PluginBase
     // ------------------------------------------------------------------
     protected void SendContactOp(string op, string contactId, string value)
     {
-        if (m_DeviceToken == "" || IsTestContact(contactId))
+        if (m_DeviceToken == "")
             return;
         // Read-only viewers do not move the owner's read marks.
         if (!CanWrite(op != FENR_PDA_ContactOp.READ))
@@ -565,9 +529,6 @@ class FENR_PDA_Client extends PluginBase
         if (m_ConversationCache.Contains(contactId))
             return m_ConversationCache[contactId];
 
-        if (IsTestContact(contactId) && m_DeviceToken == "")
-            return new array<ref FENR_PDA_ChatMessage>();
-
         if (m_DeviceToken != "" && m_PendingConvos.Find(contactId) == -1)
         {
             m_PendingConvos.Insert(contactId);
@@ -658,13 +619,9 @@ class FENR_PDA_Client extends PluginBase
         if (IsOpen())
             m_Menu.m_sendMessageStatus = 0;
 
+        // v8.8: the server checks the logged-in player's stored contacts; the
+        // list sent is empty (kept for the message format).
         ref array<string> contactIds = new array<string>();
-        foreach (FENR_PDA_Contact contact : m_Contacts)
-        {
-            if (contact)
-                contactIds.Insert(contact.m_UID);
-        }
-
         GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.CHECK_CONTACTS, new Param1<ref array<string>>(contactIds), true);
     }
 
@@ -686,9 +643,8 @@ class FENR_PDA_Client extends PluginBase
         m_Menu.Init();
         GetGame().GetUIManager().ShowScriptedMenu(m_Menu, null);
 
-        // Load this PDA's memory, then the developer test accounts.
+        // Load this PDA's memory.
         RequestSync();
-        GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.SYNC_TEST_ACCOUNTS, new Param1<bool>(true), true);
     }
 
     void Close()
@@ -715,10 +671,6 @@ class FENR_PDA_Client extends PluginBase
         if (contactId == "" || displayName == "")
             return;
 
-        // Adding a removed test account by hand brings it back.
-        if (IsTestContact(contactId) || FENR_PDA_Server.IsTestAccount(contactId))
-            SetTestHidden(contactId, false);
-
         if (!FindContact(contactId))
         {
             AddContactLocal(contactId, displayName);
@@ -732,7 +684,7 @@ class FENR_PDA_Client extends PluginBase
     // Cache only (the server already knows, e.g. an incoming message).
     void AddContactLocal(string contactId, string displayName)
     {
-        if (contactId == "" || FindContact(contactId) || IsHiddenTest(contactId))
+        if (contactId == "" || FindContact(contactId))
             return;
         string name = displayName;
         if (name == "")
@@ -740,36 +692,6 @@ class FENR_PDA_Client extends PluginBase
         m_Contacts.Insert(new FENR_PDA_Contact(contactId, name, true));
         if (m_OnlineContactIds.Find(contactId) == -1)
             m_OnlineContactIds.Insert(contactId);
-    }
-
-    void SetTestContacts(array<string> ids, array<string> names)
-    {
-        foreach (string oldID : m_TestIds)
-        {
-            FENR_PDA_Contact oldContact = FindContact(oldID);
-            if (oldContact && !IsGlobalChannel(oldID))
-                m_Contacts.RemoveItem(oldContact);
-            m_OnlineContactIds.RemoveItem(oldID);
-        }
-        m_TestIds.Clear();
-        m_TestNames.Clear();
-        if (!ids || !names)
-            return;
-
-        int count = ids.Count();
-        if (names.Count() < count)
-            count = names.Count();
-        for (int i = 0; i < count; i++)
-        {
-            m_TestIds.Insert(ids[i]);
-            m_TestNames.Insert(names[i]);
-            if (IsHiddenTest(ids[i]))
-                continue;
-            if (!FindContact(ids[i]))
-                m_Contacts.Insert(new FENR_PDA_Contact(ids[i], names[i], true));
-            if (m_OnlineContactIds.Find(ids[i]) == -1)
-                m_OnlineContactIds.Insert(ids[i]);
-        }
     }
 
     void RemoveContact(string contactId)
@@ -781,11 +703,6 @@ class FENR_PDA_Client extends PluginBase
         if (!contact)
             return;
 
-        // Test accounts only live on this client: remember the removal.
-        bool testAccount = IsTestContact(contactId);
-        if (testAccount)
-            SetTestHidden(contactId, true);
-
         // Every copy (a contact can only be listed once, but be thorough).
         while (contact)
         {
@@ -795,8 +712,7 @@ class FENR_PDA_Client extends PluginBase
         m_OnlineContactIds.RemoveItem(contactId);
         if (m_ConversationCache.Contains(contactId))
             m_ConversationCache.Remove(contactId);
-        if (!testAccount)
-            SendContactOp(FENR_PDA_ContactOp.REMOVE, contactId, "");
+        SendContactOp(FENR_PDA_ContactOp.REMOVE, contactId, "");
     }
 
     void RenameContact(string contactId, string newName)

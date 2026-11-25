@@ -3,8 +3,7 @@
     Copyright: Fenr.EXE
     Maintainer: Fenr.EXE
 
-    One message pipeline for direct messages, public channels and test-account
-    mirrors.
+    One message pipeline for direct messages and public channels.
 
     Every message is written to the log once, stamped with the account keys
     of the players it is filed for; FENR_PDA_History files it for them.
@@ -78,12 +77,6 @@ class FENR_PDA_Messages
         FENR_PDA_Storage.RememberIdentity(sender);
         body = Clamp(body, FENR_PDA_Limits.DIRECT_MESSAGE);
 
-        if (FENR_PDA_Server.TestAccountsEnabled() && FENR_PDA_Server.IsTestAccount(targetID))
-        {
-            SubmitTestMirror(sender, senderPlayer, targetID, body);
-            return;
-        }
-
         if (FENR_PDA_ChannelIds.IsChannel(targetID))
         {
             // Announcements are admin-only (FENR_PDA_Admin.Broadcast).
@@ -93,7 +86,10 @@ class FENR_PDA_Messages
             return;
         }
 
-        SubmitDirect(sender, senderPlayer, targetID, targetName, body);
+        // A direct target is a player ID (Steam64 or a legacy ID).
+        if (targetID.Length() > 64 || FENR_PDA_Server.IsRetiredID(targetID))
+            return;
+        SubmitDirect(sender, senderPlayer, targetID, Clamp(targetName, FENR_PDA_Limits.CONTACT_NAME), body);
     }
 
     // Server-generated direct message (S.O.S): no throttle, same pipeline.
@@ -147,26 +143,6 @@ class FENR_PDA_Messages
             Deliver(holder, senderID, sender.GetName(), body, false, record.Seq);
     }
 
-    protected static void SubmitTestMirror(PlayerIdentity sender, PlayerBase senderPlayer, string testID, string body)
-    {
-        string testName = FENR_PDA_Server.TestAccountName(testID);
-        string senderKey = FENR_PDA_AccountStore.KeyFor(sender.GetPlainId());
-
-        ref FENR_PDA_MessageRecord outbound = NewChatRecord(FENR_PDA_MessageType.DIRECT, sender, testID, testName, body);
-        outbound.SenderDevice = senderKey;
-        outbound.SenderConvID = testID;
-        Record(outbound);
-        Deliver(senderPlayer, testID, sender.GetName(), body, true, outbound.Seq);
-
-        ref FENR_PDA_MessageRecord reply = NewRecord(FENR_PDA_MessageType.DIRECT, testID, testName, sender.GetPlainId(), sender.GetName());
-        reply.Message = body;
-        reply.Seq = FENR_PDA_History.NextSeq();
-        reply.GameTime = FENR_PDA_UI_Kit.GameTime();
-        reply.TargetDevice = senderKey;
-        Record(reply);
-        Deliver(senderPlayer, testID, testName, body, false, reply.Seq);
-    }
-
     protected static void SubmitChannel(PlayerIdentity sender, string channelID, string body)
     {
         ref FENR_PDA_MessageRecord record = NewChatRecord(FENR_PDA_MessageType.CHANNEL, sender, channelID, FENR_PDA_ChannelIds.Label(channelID), body);
@@ -181,18 +157,14 @@ class FENR_PDA_Messages
         if (!GetGame().IsServer())
             return;
 
-        ref array<Man> players = new array<Man>();
-        GetGame().GetPlayers(players);
-        foreach (Man man : players)
+        // One pass over the sessions (no inventory scans).
+        ref array<PlayerBase> holders = new array<PlayerBase>();
+        ref array<string> owners = new array<string>();
+        FENR_PDA_Sessions.LiveHolders(holders, owners);
+        for (int i = 0; i < holders.Count(); i++)
         {
-            PlayerBase player = PlayerBase.Cast(man);
-            if (!player || !player.GetIdentity())
-                continue;
-            FENR_PDA_Device device = FENR_PDA_Sessions.ActiveDevice(player);
-            if (!device)
-                continue;
-            bool own = senderID != "" && device.FenrSessionOwner() == senderID;
-            Deliver(player, channelID, senderName, body, own, seq);
+            bool own = senderID != "" && owners[i] == senderID;
+            Deliver(holders[i], channelID, senderName, body, own, seq);
         }
     }
 
@@ -217,12 +189,6 @@ class FENR_PDA_Messages
 
         foreach (string requestedID : requestedIDs)
         {
-            if (FENR_PDA_Server.TestAccountsEnabled() && FENR_PDA_Server.IsTestAccount(requestedID))
-            {
-                output.Insert(requestedID);
-                continue;
-            }
-
             // Online = someone is using a PDA logged in as that player.
             string steam64 = requestedID;
             PlayerBase player = online.Get(requestedID);
@@ -245,9 +211,6 @@ class FENR_PDA_Messages
     {
         contactID = "";
         displayName = "";
-
-        if (FENR_PDA_Server.ResolveTestAccount(lookup, contactID, displayName))
-            return true;
 
         // Explicit "add by name or ID": the only lookup allowed to match names.
         PlayerBase player = FENR_PDA_Server.FindOnlinePlayer(lookup, true);

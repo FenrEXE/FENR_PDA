@@ -14,7 +14,6 @@ class FENR_PDA_Trade
 
     protected static ref array<ref FENR_PDA_TradeListing> s_Listings;
     protected static bool s_Initialized = false;
-    protected static int s_Counter = 0;
 
     static void Init()
     {
@@ -57,26 +56,6 @@ class FENR_PDA_Trade
             SaveTrade();
     }
 
-    // Trims, flattens to one line and caps the length.
-    protected static string CleanText(string text, int maxChars)
-    {
-        string result = text;
-        result.Replace("\n", " ");
-        result.Replace("\r", " ");
-        result = result.Trim();
-        if (result.LengthUtf8() > maxChars)
-            result = result.SubstringUtf8(0, maxChars);
-        return result;
-    }
-
-    protected static string NewListingID()
-    {
-        s_Counter++;
-        int now = GetGame().GetTime();
-        int salt = Math.RandomInt(1000, 9999);
-        return "T" + now.ToString() + "_" + s_Counter.ToString() + "_" + salt.ToString();
-    }
-
     // Owner Steam64 of a listing, or "" if it no longer exists.
     static string OwnerOf(string listingID)
     {
@@ -97,15 +76,31 @@ class FENR_PDA_Trade
         return null;
     }
 
+    // Active (not closed) listings; ownerID "" = everyone's.
     protected static int ActiveCountFor(string ownerID)
     {
+        EnsureLoaded();
         int count = 0;
         foreach (FENR_PDA_TradeListing listing : s_Listings)
         {
-            if (listing && listing.OwnerID == ownerID && listing.Status != FENR_PDA_TradeStatus.CLOSED)
+            if (listing && listing.Status != FENR_PDA_TradeStatus.CLOSED && (ownerID == "" || listing.OwnerID == ownerID))
                 count++;
         }
         return count;
+    }
+
+    protected static bool DropOldestClosed()
+    {
+        for (int i = 0; i < s_Listings.Count(); i++)
+        {
+            FENR_PDA_TradeListing listing = s_Listings[i];
+            if (!listing || listing.Status == FENR_PDA_TradeStatus.CLOSED)
+            {
+                s_Listings.RemoveOrdered(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     static bool Create(PlayerIdentity sender, string listingType, string category, string title, string price, string description, out string info)
@@ -126,9 +121,9 @@ class FENR_PDA_Trade
             return false;
         }
 
-        string cleanTitle = CleanText(title, FENR_PDA_TradeLimits.TITLE);
-        string cleanPrice = CleanText(price, FENR_PDA_TradeLimits.PRICE);
-        string cleanDescription = CleanText(description, FENR_PDA_TradeLimits.DESCRIPTION);
+        string cleanTitle = FENR_PDA_Board.CleanText(title, FENR_PDA_TradeLimits.TITLE);
+        string cleanPrice = FENR_PDA_Board.CleanText(price, FENR_PDA_TradeLimits.PRICE);
+        string cleanDescription = FENR_PDA_Board.CleanText(description, FENR_PDA_TradeLimits.DESCRIPTION);
         if (cleanTitle == "")
         {
             info = "Enter a title for the listing.";
@@ -147,14 +142,15 @@ class FENR_PDA_Trade
             info = "You already have " + maxListings.ToString() + " active listings. Close or remove one first.";
             return false;
         }
-        if (s_Listings.Count() >= MAX_TOTAL_LISTINGS)
+        // Closed listings do not count: the oldest closed one makes room.
+        if (s_Listings.Count() >= MAX_TOTAL_LISTINGS && !DropOldestClosed())
         {
             info = "The trade board is full. Try again later.";
             return false;
         }
 
         ref FENR_PDA_TradeListing listing = new FENR_PDA_TradeListing();
-        listing.ID = NewListingID();
+        listing.ID = FENR_PDA_Board.NewID("T");
         listing.Type = listingType;
         listing.Title = cleanTitle;
         listing.Price = cleanPrice;
@@ -298,26 +294,12 @@ class FENR_PDA_Trade
         int pageSize = FENR_PDA_TradeLimits.PAGE_SIZE;
         if (board == FENR_PDA_TradeType.MINE)
             pageSize = 50;
-        int maxPage = 0;
-        if (total > 0)
-            maxPage = (total - 1) / pageSize;
-        if (page > maxPage)
-            page = maxPage;
-        if (page < 0)
-            page = 0;
-        pageOut = page;
-
-        int start = page * pageSize;
-        int end = start + pageSize;
-        if (end > total)
-            end = total;
+        int start, end;
+        FENR_PDA_Board.PageSlice(total, page, pageSize, pageOut, start, end);
 
         for (int j = start; j < end; j++)
         {
             FENR_PDA_TradeListing item = matches[j];
-            string posted = item.Created;
-            if (posted.Length() >= 16)
-                posted = posted.Substring(5, 11);
             fields.Insert(item.ID);
             fields.Insert(item.Type);
             fields.Insert(item.Title);
@@ -326,7 +308,7 @@ class FENR_PDA_Trade
             fields.Insert(item.OwnerID);
             fields.Insert(item.OwnerName);
             fields.Insert(item.Status);
-            fields.Insert(posted);
+            fields.Insert(FENR_PDA_Board.Posted(item.Created));
             fields.Insert(FENR_PDA_TradeCategory.Normalize(item.Category));
             fields.Insert(FENR_PDA_Reputation.Summary(item.OwnerID));
         }

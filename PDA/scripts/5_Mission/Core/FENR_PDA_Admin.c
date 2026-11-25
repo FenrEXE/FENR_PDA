@@ -25,16 +25,39 @@ class FENR_PDA_Admin
         "MenuSpectateTools"
     };
 
+    // VPP answers are reused for CACHE_MS (a permission change applies
+    // within a minute).
+    static const int CACHE_MS = 60000;
+    protected static ref map<string, bool> s_Allowed;
+    protected static ref map<string, int> s_CheckedAt;
+
     static bool IsAuthorized(PlayerIdentity identity)
     {
         if (!identity)
             return false;
 
-        FENR_PDA_Storage.RememberIdentity(identity);
         string steam64 = identity.GetPlainId();
         if (steam64 == "")
             return false;
 
+        if (!s_Allowed)
+        {
+            s_Allowed = new map<string, bool>();
+            s_CheckedAt = new map<string, int>();
+        }
+        int now = GetGame().GetTime();
+        if (s_CheckedAt.Contains(steam64) && now - s_CheckedAt.Get(steam64) < CACHE_MS)
+            return s_Allowed.Get(steam64);
+
+        FENR_PDA_Storage.RememberIdentity(identity);
+        bool allowed = CheckVpp(steam64);
+        s_Allowed.Set(steam64, allowed);
+        s_CheckedAt.Set(steam64, now);
+        return allowed;
+    }
+
+    protected static bool CheckVpp(string steam64)
+    {
         PermissionManager permissions = GetPermissionManager();
         if (!permissions)
             return false;
@@ -45,6 +68,15 @@ class FENR_PDA_Admin
                 return true;
         }
         return false;
+    }
+
+    // A player left: forget their cached answer.
+    static void Forget(string steam64)
+    {
+        if (!s_Allowed)
+            return;
+        s_Allowed.Remove(steam64);
+        s_CheckedAt.Remove(steam64);
     }
 
     static ref FENR_PDA_AdminSearchResult BuildSearch(string query, string typeFilter, int page)
@@ -100,6 +132,11 @@ class FENR_PDA_Admin
         ref array<Man> players = new array<Man>();
         GetGame().GetPlayers(players);
 
+        // Who is using which logged-in PDA, in one pass over the sessions.
+        ref array<PlayerBase> holders = new array<PlayerBase>();
+        ref array<string> owners = new array<string>();
+        FENR_PDA_Sessions.LiveHolders(holders, owners);
+
         foreach (Man man : players)
         {
             PlayerBase player = PlayerBase.Cast(man);
@@ -107,11 +144,11 @@ class FENR_PDA_Admin
                 continue;
 
             string state = "NO PDA";
-            FENR_PDA_Device active = FENR_PDA_Sessions.ActiveDevice(player);
-            if (active && active.FenrSessionOwner() == player.GetIdentity().GetPlainId())
+            int held = holders.Find(player);
+            if (held != -1 && owners[held] == player.GetIdentity().GetPlainId())
                 state = "LOGGED IN";
-            else if (active)
-                state = "USING " + active.FenrSessionName() + "'S PDA";
+            else if (held != -1)
+                state = "USING " + FENR_PDA_Storage.ResolvePlayerName(owners[held]) + "'S PDA";
             else if (FENR_PDA_Server.HasWorkingDevice(player))
                 state = "PDA LOCKED";
 

@@ -213,16 +213,8 @@ class FENR_PDA_Menu extends UIScriptedMenu
         CollectScaledTexts(layoutRoot);
         FitDevice();
 
+        // Contact online status follows the device sync (FENR_PDA_Client).
         FENR_PDA_Client client = FENR_PDA_Client.Cast(GetPlugin(FENR_PDA_Client));
-        if (client)
-        {
-            ref array<string> ids = new array<string>();
-            foreach (FENR_PDA_Contact c : client.m_Contacts)
-            {
-                if (c) ids.Insert(c.m_UID);
-            }
-            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.CHECK_CONTACTS, new Param1<ref array<string>>(ids), true);
-        }
         GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.USER_ID, new Param1<string>(""), true);
         m_Admin.RequestStatus();
 

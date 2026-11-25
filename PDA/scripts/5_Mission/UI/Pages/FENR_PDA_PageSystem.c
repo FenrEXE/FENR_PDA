@@ -472,7 +472,7 @@ class FENR_PDA_PageSystem extends FENR_PDA_UI_Page
             {
                 foreach (FENR_PDA_Contact contact : client.m_Contacts)
                 {
-                    if (!contact || FENR_PDA_Client.IsGlobalChannel(contact.m_UID) || client.IsTestContact(contact.m_UID)) continue;
+                    if (!contact || FENR_PDA_Client.IsGlobalChannel(contact.m_UID)) continue;
                     bool chosen = m_SosTargets.Find(contact.m_UID) != -1;
                     m_SosRowIds.Insert(contact.m_UID);
                     labels.Insert(contact.m_Name);

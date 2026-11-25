@@ -115,8 +115,21 @@ class FENR_PDA_Sessions
         return left;
     }
 
+    // A logged-in PDA that is powered and carried by a living, connected
+    // player: that player (else null).
+    protected static PlayerBase LiveCarrier(FENR_PDA_Device device)
+    {
+        if (!device || OwnerOf(device) == "" || !FENR_PDA_Server.IsWorkingDevice(device))
+            return null;
+        PlayerBase holder = HolderOf(device);
+        if (!holder || !holder.GetIdentity() || !holder.IsAlive())
+            return null;
+        return holder;
+    }
+
     // The logged-in, powered PDA a player is using: the one in hands, else
-    // the first one carried.  Used for live traffic and the compass HUD.
+    // any logged-in one they carry.  Used for live traffic and the compass
+    // HUD.  v8.8: looked up through the session map (no inventory scan).
     static FENR_PDA_Device ActiveDevice(PlayerBase player)
     {
         if (!player)
@@ -125,19 +138,22 @@ class FENR_PDA_Sessions
         if (hands && FENR_PDA_Server.IsWorkingDevice(hands) && OwnerOf(hands) != "")
             return hands;
 
-        array<EntityAI> inventory = new array<EntityAI>();
-        player.GetInventory().EnumerateInventory(InventoryTraversalType.PREORDER, inventory);
-        foreach (EntityAI entity : inventory)
+        // Copied first: checking a session can end it (and change the map).
+        EnsureMap();
+        array<FENR_PDA_Device> devices = new array<FENR_PDA_Device>();
+        for (int i = 0; i < s_ByOwner.Count(); i++)
+            devices.Insert(s_ByOwner.GetElement(i));
+        foreach (FENR_PDA_Device candidate : devices)
         {
-            FENR_PDA_Device candidate = FENR_PDA_Device.Cast(entity);
-            if (candidate && FENR_PDA_Server.IsWorkingDevice(candidate) && OwnerOf(candidate) != "")
+            if (candidate && HolderOf(candidate) == player && LiveCarrier(candidate))
                 return candidate;
         }
         return null;
     }
 
-    // Who receives a player's live traffic: the player currently using the
-    // PDA logged in as them (the owner, or whoever took it).  null = nobody.
+    // Who receives a player's live traffic: the player currently carrying
+    // the powered PDA logged in as them (the owner, or whoever took it).
+    // null = nobody.
     static PlayerBase LiveHolder(string ownerID)
     {
         if (ownerID == "")
@@ -146,24 +162,80 @@ class FENR_PDA_Sessions
         FENR_PDA_Device device = s_ByOwner.Get(ownerID);
         if (!device || OwnerOf(device) != ownerID)
             return null;
-        PlayerBase holder = HolderOf(device);
-        if (!holder || !holder.GetIdentity() || !holder.IsAlive())
+        return LiveCarrier(device);
+    }
+
+    // The powered PDA logged in as `ownerID` that `player` carries (hands
+    // first), or null.  A player has at most one session, so this is the
+    // session map entry.
+    static FENR_PDA_Device OwnDevice(PlayerBase player, string ownerID)
+    {
+        if (!player || ownerID == "")
             return null;
-        if (ActiveDevice(holder) != device)
-            return null;
-        return holder;
+        FENR_PDA_Device hands = FENR_PDA_Device.Cast(player.GetItemInHands());
+        if (hands && FENR_PDA_Server.IsWorkingDevice(hands) && OwnerOf(hands) == ownerID)
+            return hands;
+        EnsureMap();
+        FENR_PDA_Device device = s_ByOwner.Get(ownerID);
+        if (device && OwnerOf(device) == ownerID && HolderOf(device) == player && FENR_PDA_Server.IsWorkingDevice(device))
+            return device;
+        return null;
+    }
+
+    // Every player carrying a powered, logged-in PDA, once each (one pass
+    // over the sessions).  owners (optional): the account that PDA is
+    // logged in as, same order.
+    static void LiveHolders(array<PlayerBase> output, array<string> owners = null)
+    {
+        output.Clear();
+        if (owners)
+            owners.Clear();
+        EnsureMap();
+        array<string> ids = new array<string>();
+        for (int i = 0; i < s_ByOwner.Count(); i++)
+            ids.Insert(s_ByOwner.GetKey(i));
+        foreach (string id : ids)
+        {
+            PlayerBase holder = LiveHolder(id);
+            if (!holder || output.Find(holder) != -1)
+                continue;
+            output.Insert(holder);
+            if (owners)
+                owners.Insert(id);
+        }
     }
 
     // ------------------------------------------------------------------
     // Access for requests made through the open PDA (the one in hands)
     // ------------------------------------------------------------------
+    // One request often asks several times: the answer is reused for the
+    // rest of that server frame.
+    protected static string s_AccessID = "";
+    protected static int s_AccessTime = -1;
+    protected static ref FENR_PDA_Access s_Access;
+
     static ref FENR_PDA_Access AccessOf(PlayerIdentity identity)
     {
         if (!identity)
             return null;
+        string id = identity.GetPlainId();
+        int now = GetGame().GetTime();
+        if (s_AccessID == id && s_AccessTime == now)
+            return s_Access;
         PlayerBase player = FENR_PDA_Server.PlayerOf(identity);
         FENR_PDA_Device device = FENR_PDA_Server.FindDevice(player);
-        return AccessFor(identity, device);
+        s_Access = AccessFor(identity, device);
+        s_AccessID = id;
+        s_AccessTime = now;
+        return s_Access;
+    }
+
+    // Logins, logouts and ended sessions change the answer.
+    protected static void ForgetAccess()
+    {
+        s_AccessID = "";
+        s_AccessTime = -1;
+        s_Access = null;
     }
 
     // Access through the PDA the player is using with the PDA closed
@@ -239,6 +311,7 @@ class FENR_PDA_Sessions
             FENR_PDA_Storage.LogSystem("PDA_TAKEOVER Player=" + identity.GetName() + " Steam64=" + id + " PreviousOwner=" + current);
         }
 
+        ForgetAccess();
         device.FenrStartSession(id, identity.GetName(), GetGame().GetTime() + hours * HOUR_MS);
         s_ByOwner.Set(id, device);
         FENR_PDA_Storage.RememberIdentity(identity);
@@ -283,6 +356,7 @@ class FENR_PDA_Sessions
             s_ByOwner.Remove(owner);
         if (owner == "")
             return;
+        ForgetAccess();
         device.FenrEndSession();
 
         PlayerBase holder = HolderOf(device);

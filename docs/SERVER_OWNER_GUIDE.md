@@ -1,4 +1,4 @@
-# Fenrir Industries PDA — Server Owner Guide (v8.7)
+# Fenrir Industries PDA — Server Owner Guide (v8.8)
 
 ## New items
 
@@ -8,6 +8,8 @@
 | `FENR_PDA_EncryptedDrive` | Write-once data drive: saved conversations, group chats and marker sets that others can read | Encrypted Drive |
 
 Both use the same drive model. The PDA has one slot for each type, plus the battery slot.
+
+> **v8.8:** the developer test accounts are gone; `TestAccountsEnabled` is dropped from the config on the next start. Battery drain is decided by the server: a powered PDA in hands drains at the "open" rate.
 
 > **v8.7:** the old plain Flash Drive (`FENR_PDA_FlashDrive`) and its PDA slot are gone. Remove it from your `types.xml`; any already in the world are deleted on the next restart.
 
@@ -54,8 +56,8 @@ If a key is missing from your config file, the default below is used. Since v8.0
 | `BountyEnabled` | true | Bounty board on/off |
 | `BountyMaxPerPlayer` | 3 | Active player bounties per player |
 | `BountyDays` | 7 | Bounty lifetime |
-| `BatteryDrainEnabled` | true | Drain the PDA battery while it is open |
-| `BatteryDrainOpenPercentPerMinute` | 1.0 | Drain while open |
+| `BatteryDrainEnabled` | true | Drain the PDA battery while it is in use (a powered PDA in hands counts as in use) |
+| `BatteryDrainOpenPercentPerMinute` | 1.0 | Drain while open or held powered in hands |
 | `BatteryDrainMapPercentPerMinute` | 1.5 | Extra drain while the map is open |
 | `MessageLogsDays` | 14 | How long message logs are kept. Also how far back PDA chat history is rebuilt at server start (0 = keep logs forever, rebuild the last 90 days) |
 | `DeviceInactiveDays` | 30 | Erase a player's PDA memory after this many days without logging in, and forget players not seen this long (0 = never) |

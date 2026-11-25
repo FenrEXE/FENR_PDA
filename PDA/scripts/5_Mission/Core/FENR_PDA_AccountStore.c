@@ -31,6 +31,7 @@ class FENR_PDA_AccountStore
     static const int MAX_CONTACTS = 200;
     static const int MAX_MARKERS = 40;
     static const int MAX_NOTES = 4000;
+    static const float MAX_COORD = 50000;
     static const int FORMAT = 2;
     static const string READ_ONLY = "Read-only access. Log in as yourself to do that.";
 
@@ -304,6 +305,17 @@ class FENR_PDA_AccountStore
             meta = new FENR_PDA_DeviceMeta();
         Normalize(meta);
         s_Meta.Set(key, meta);
+
+        // v8.8: the developer test accounts were removed.
+        for (int c = meta.Contacts.Count() - 1; c >= 0; c--)
+        {
+            FENR_PDA_Contact stored = meta.Contacts[c];
+            if (stored && FENR_PDA_Server.IsRetiredID(stored.m_UID))
+            {
+                meta.Contacts.RemoveOrdered(c);
+                MarkDirty(key);
+            }
+        }
 
         if (!s_LastUsed.Contains(key))
         {
@@ -589,7 +601,7 @@ class FENR_PDA_AccountStore
     {
         if (ownerID == "" || conversationID == "")
             return;
-        if (FENR_PDA_ChannelIds.IsChannel(conversationID) || FENR_PDA_Server.IsTestAccount(conversationID))
+        if (FENR_PDA_ChannelIds.IsChannel(conversationID))
             return;
 
         string key = KeyFor(ownerID);
@@ -616,7 +628,9 @@ class FENR_PDA_AccountStore
     //   markers:  name, x, z                                   (stride 3)
     // Returns the account token ("" = locked / no PDA).
     // ------------------------------------------------------------------
-    static string BuildSync(PlayerIdentity identity, string terrain, array<string> contactFields, out string notes, array<string> markerFields, out bool isNew)
+    // v8.8: markers are filed under the server's own map name; the client's
+    // terrain name is ignored.
+    static string BuildSync(PlayerIdentity identity, array<string> contactFields, out string notes, array<string> markerFields, out bool isNew)
     {
         contactFields.Clear();
         markerFields.Clear();
@@ -662,7 +676,7 @@ class FENR_PDA_AccountStore
             contactFields.Insert("0");
         }
         notes = meta.Notes;
-        MarkerFields(meta, terrain, markerFields);
+        MarkerFields(meta, FENR_PDA_Storage.WorldName(), markerFields);
         return key;
     }
 
@@ -719,7 +733,7 @@ class FENR_PDA_AccountStore
 
         if (op == FENR_PDA_ContactOp.ADD)
         {
-            if (contact || meta.Contacts.Count() >= MAX_CONTACTS || FENR_PDA_Server.IsTestAccount(contactID))
+            if (contact || meta.Contacts.Count() >= MAX_CONTACTS || FENR_PDA_Server.IsRetiredID(contactID))
                 return;
             string name = CleanName(value);
             if (name == "")
@@ -784,20 +798,24 @@ class FENR_PDA_AccountStore
         MarkDirty(key);
     }
 
-    static void SaveMarkers(PlayerIdentity identity, string token, string terrain, array<string> fields)
+    static void SaveMarkers(PlayerIdentity identity, string token, array<string> fields)
     {
         string key = Authorize(identity, token, true);
-        if (key == "" || terrain == "" || !fields)
+        if (key == "" || !fields)
             return;
         FENR_PDA_DeviceMeta meta = Meta(key, true);
-        FENR_PDA_TerrainMarkers markerSet = MarkerSetFor(meta, terrain, true);
+        FENR_PDA_TerrainMarkers markerSet = MarkerSetFor(meta, FENR_PDA_Storage.WorldName(), true);
         markerSet.Markers.Clear();
         for (int i = 0; i + 3 <= fields.Count(); i += 3)
         {
             if (markerSet.Markers.Count() >= MAX_MARKERS) break;
             string name = fields[i];
             if (name.LengthUtf8() > 24) name = name.SubstringUtf8(0, 24);
-            markerSet.Markers.Insert(new FENR_PDA_MapMarker(name, fields[i + 1].ToFloat(), fields[i + 2].ToFloat()));
+            float x = fields[i + 1].ToFloat();
+            float z = fields[i + 2].ToFloat();
+            // Only plausible map coordinates (largest maps are ~25 km).
+            if (!(x >= 0 && x <= MAX_COORD && z >= 0 && z <= MAX_COORD)) continue;
+            markerSet.Markers.Insert(new FENR_PDA_MapMarker(name, x, z));
         }
         MarkDirty(key);
     }
@@ -842,7 +860,7 @@ class FENR_PDA_AccountStore
             {
                 if (meta.SosTargets.Count() >= limit) break;
                 if (target == "" || meta.SosTargets.Find(target) != -1) continue;
-                if (!FindContactIn(meta, target) || FENR_PDA_Server.IsTestAccount(target)) continue;
+                if (!FindContactIn(meta, target)) continue;
                 meta.SosTargets.Insert(target);
             }
         }
@@ -855,7 +873,7 @@ class FENR_PDA_AccountStore
 
     // Markers shown on the compass HUD of the PDA a player is using
     // (read-only; a guest sees the owner's markers).
-    static void HudMarkers(PlayerIdentity identity, string terrain, array<string> fields)
+    static void HudMarkers(PlayerIdentity identity, array<string> fields)
     {
         fields.Clear();
         FENR_PDA_Access access = FENR_PDA_Sessions.ActiveAccessOf(identity);
@@ -863,7 +881,25 @@ class FENR_PDA_AccountStore
             return;
         FENR_PDA_DeviceMeta meta = Meta(access.Key(), false);
         if (meta)
-            MarkerFields(meta, terrain, fields);
+            MarkerFields(meta, FENR_PDA_Storage.WorldName(), fields);
+    }
+
+    // Contact IDs of the player the open PDA is logged in as (online
+    // status checks use these, never a list from the client).
+    static void ContactIDs(PlayerIdentity identity, array<string> output)
+    {
+        output.Clear();
+        FENR_PDA_Access access = FENR_PDA_Sessions.AccessOf(identity);
+        if (!access)
+            return;
+        FENR_PDA_DeviceMeta meta = Meta(access.Key(), false);
+        if (!meta)
+            return;
+        foreach (FENR_PDA_Contact contact : meta.Contacts)
+        {
+            if (contact && contact.m_UID != "")
+                output.Insert(contact.m_UID);
+        }
     }
 
     // ------------------------------------------------------------------

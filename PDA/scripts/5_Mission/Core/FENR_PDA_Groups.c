@@ -4,12 +4,21 @@
     Maintainer: Fenr.EXE
 
     Persistent, server-authoritative private channel service.
+
+    v8.8: groups and group histories are kept in memory and written to disk
+    by Flush() every FLUSH_MS (and when the mission ends) instead of on
+    every change.
 */
 
 class FENR_PDA_Groups
 {
+    static const int FLUSH_MS = 30000;
+
     protected static ref array<ref FENR_PDA_Group> s_Groups;
+    protected static ref map<string, FENR_PDA_Group> s_ByID;
     protected static ref map<string, ref array<ref FENR_PDA_GroupMessage>> s_MessageCache;
+    protected static ref map<string, bool> s_DirtyHistory;
+    protected static bool s_GroupsDirty;
     static int s_GroupCounter = 0;
     static bool s_Initialized = false;
 
@@ -24,11 +33,15 @@ class FENR_PDA_Groups
 
         s_Groups = FENR_PDA_Storage.LoadGroups();
         s_MessageCache = new map<string, ref array<ref FENR_PDA_GroupMessage>>();
+        s_DirtyHistory = new map<string, bool>();
         if (!s_Groups)
             s_Groups = new array<ref FENR_PDA_Group>();
+        PurgeRetiredMembers();
+        RebuildIndex();
         FENR_PDA_Storage.SaveGroups(s_Groups);
 
         s_Initialized = true;
+        GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(Flush, FLUSH_MS, true);
         FENR_PDA_Storage.LogSystem("Fenrir Industries PDA group service initialized. Groups=" + s_Groups.Count().ToString());
     }
 
@@ -38,12 +51,70 @@ class FENR_PDA_Groups
             Init();
     }
 
-    static void SaveGroups()
+    // v8.8: the developer test accounts were removed; drop them from groups.
+    protected static void PurgeRetiredMembers()
     {
-        if (!s_Groups)
-            s_Groups = new array<ref FENR_PDA_Group>();
+        foreach (FENR_PDA_Group group : s_Groups)
+        {
+            if (!group || !group.Members)
+                continue;
+            for (int i = group.Members.Count() - 1; i >= 0; i--)
+            {
+                FENR_PDA_GroupMember member = group.Members[i];
+                if (!member || FENR_PDA_Server.IsRetiredID(member.ID))
+                    group.Members.RemoveOrdered(i);
+            }
+        }
+    }
 
-        FENR_PDA_Storage.SaveGroups(s_Groups);
+    protected static void RebuildIndex()
+    {
+        s_ByID = new map<string, FENR_PDA_Group>();
+        foreach (FENR_PDA_Group group : s_Groups)
+        {
+            if (group)
+                s_ByID.Set(group.GroupID, group);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Persistence (deferred)
+    // ------------------------------------------------------------------
+    protected static void MarkGroupsDirty()
+    {
+        s_GroupsDirty = true;
+    }
+
+    protected static void MarkHistoryDirty(string groupID)
+    {
+        if (s_DirtyHistory)
+            s_DirtyHistory.Set(groupID, true);
+    }
+
+    // Writes changed groups and histories.  Called by the timer and when
+    // the mission ends.
+    static void Flush()
+    {
+        if (!s_Initialized)
+            return;
+        if (s_GroupsDirty)
+        {
+            s_GroupsDirty = false;
+            FENR_PDA_Storage.SaveGroups(s_Groups);
+        }
+        if (!s_DirtyHistory || s_DirtyHistory.Count() == 0)
+            return;
+        for (int i = 0; i < s_DirtyHistory.Count(); i++)
+        {
+            string groupID = s_DirtyHistory.GetKey(i);
+            // Deleted meanwhile: nothing to write.
+            if (!s_ByID.Contains(groupID))
+                continue;
+            array<ref FENR_PDA_GroupMessage> messages = s_MessageCache.Get(groupID);
+            if (messages)
+                FENR_PDA_Storage.SaveGroupHistory(groupID, messages);
+        }
+        s_DirtyHistory.Clear();
     }
 
     protected static string TwoDigit(int value)
@@ -86,21 +157,19 @@ class FENR_PDA_Groups
         if (!group || !group.Members || lookup == "")
             return -1;
 
+        // Exact ID first (the usual case), then the same player by Steam64.
+        int exact = group.FindMemberIndex(lookup);
+        if (exact >= 0)
+            return exact;
+
         string canonicalSteam64 = FENR_PDA_Storage.ResolveSteam64(lookup);
+        if (canonicalSteam64 == "")
+            return -1;
         for (int i = 0; i < group.Members.Count(); i++)
         {
             FENR_PDA_GroupMember member = group.Members.Get(i);
-            if (!member)
-                continue;
-            if (member.ID == lookup)
+            if (member && FENR_PDA_Storage.ResolveSteam64(member.ID) == canonicalSteam64)
                 return i;
-
-            if (canonicalSteam64 != "")
-            {
-                string memberSteam64 = FENR_PDA_Storage.ResolveSteam64(member.ID);
-                if (memberSteam64 == canonicalSteam64)
-                    return i;
-            }
         }
         return -1;
     }
@@ -149,25 +218,6 @@ class FENR_PDA_Groups
         return memberID;
     }
 
-    static void FillGroupsForIdentity(PlayerIdentity identity, array<string> ids, array<string> names, array<string> ownerIDs)
-    {
-        EnsureInit();
-        if (!identity || !ids || !names || !ownerIDs)
-            return;
-
-        ids.Clear();
-        names.Clear();
-        ownerIDs.Clear();
-        foreach (FENR_PDA_Group group : s_Groups)
-        {
-            if (!group || !HasMemberIdentity(group, identity))
-                continue;
-            ids.Insert(group.GroupID);
-            names.Insert(group.GroupName);
-            ownerIDs.Insert(group.OwnerID);
-        }
-    }
-
     static bool IsMember(PlayerIdentity identity, string groupID)
     {
         FENR_PDA_Group group = FindGroup(groupID);
@@ -177,12 +227,9 @@ class FENR_PDA_Groups
     static FENR_PDA_Group FindGroup(string groupID)
     {
         EnsureInit();
-        foreach (FENR_PDA_Group group : s_Groups)
-        {
-            if (group && group.GroupID == groupID)
-                return group;
-        }
-        return null;
+        if (groupID == "")
+            return null;
+        return s_ByID.Get(groupID);
     }
 
     protected static int CountOwnedGroups(PlayerIdentity owner)
@@ -202,13 +249,6 @@ class FENR_PDA_Groups
 
     protected static string ResolveMemberName(string memberID, string suppliedName)
     {
-        if (FENR_PDA_Server.IsTestAccount(memberID))
-        {
-            string testName = FENR_PDA_Server.TestAccountName(memberID);
-            if (testName != "")
-                return testName;
-        }
-
         PlayerBase onlinePlayer = FENR_PDA_Server.FindOnlinePlayer(memberID);
         if (onlinePlayer && onlinePlayer.GetIdentity())
             return onlinePlayer.GetIdentity().GetName();
@@ -244,22 +284,11 @@ class FENR_PDA_Groups
                 if (messages[i])
                     messages[i].Seq = i + 1;
             }
+            MarkHistoryDirty(groupID);
         }
 
         s_MessageCache.Set(groupID, messages);
         return messages;
-    }
-
-    protected static void SaveMessages(string groupID, array<ref FENR_PDA_GroupMessage> messages)
-    {
-        if (!messages)
-            return;
-
-        while (messages.Count() > FENR_PDA_Limits.GROUP_HISTORY)
-            messages.RemoveOrdered(0);
-
-        s_MessageCache.Set(groupID, messages);
-        FENR_PDA_Storage.SaveGroupHistory(groupID, messages);
     }
 
     protected static void AppendMessage(string groupID, string senderID, string senderName, string messageText)
@@ -275,7 +304,12 @@ class FENR_PDA_Groups
         message.SenderName = senderName;
         message.MessageText = messageText;
         messages.Insert(message);
-        SaveMessages(groupID, messages);
+
+        // Drop the oldest in one go.
+        int excess = messages.Count() - FENR_PDA_Limits.GROUP_HISTORY;
+        for (int i = 0; i < excess; i++)
+            messages.RemoveOrdered(0);
+        MarkHistoryDirty(groupID);
     }
 
     protected static void AppendSystemMessage(FENR_PDA_Group group, string text)
@@ -287,8 +321,6 @@ class FENR_PDA_Groups
     // UI refresh for whoever is using that member's logged-in PDA.
     protected static void SendRefreshToIdentity(string identityID, string groupID)
     {
-        if (FENR_PDA_Server.IsTestAccount(identityID))
-            return;
         PlayerBase player = FENR_PDA_Sessions.LiveHolder(Steam64Of(identityID));
         if (player && player.GetIdentity())
             GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.GROUP_REFRESH, new Param1<string>(groupID), true, player.GetIdentity());
@@ -314,28 +346,23 @@ class FENR_PDA_Groups
         }
     }
 
-    protected static void SendIncoming(string memberID, string groupID, string groupName, string senderName, string messageText)
-    {
-        if (FENR_PDA_Server.IsTestAccount(memberID))
-            return;
-
-        // Live to whoever is using that member's logged-in PDA.
-        PlayerBase recipient = FENR_PDA_Sessions.LiveHolder(Steam64Of(memberID));
-        if (!recipient || !recipient.GetIdentity())
-            return;
-
-        GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.GROUP_INCOMING, new Param4<string, string, string, string>(groupID, groupName, senderName, messageText), true, recipient.GetIdentity());
-    }
-
-    protected static void BroadcastIncoming(FENR_PDA_Group group, string senderName, string messageText)
+    // Live to whoever is using that member's logged-in PDA.  own: the
+    // message was written by the player that PDA is logged in as (no toast).
+    protected static void BroadcastIncoming(FENR_PDA_Group group, string senderSteam64, string senderName, string messageText)
     {
         if (!group || !group.Members)
             return;
 
         foreach (FENR_PDA_GroupMember member : group.Members)
         {
-            if (member)
-                SendIncoming(member.ID, group.GroupID, group.GroupName, senderName, messageText);
+            if (!member)
+                continue;
+            string memberSteam64 = Steam64Of(member.ID);
+            PlayerBase recipient = FENR_PDA_Sessions.LiveHolder(memberSteam64);
+            if (!recipient || !recipient.GetIdentity())
+                continue;
+            bool own = memberSteam64 == senderSteam64;
+            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.GROUP_INCOMING, new Param5<string, string, string, string, bool>(group.GroupID, group.GroupName, senderName, messageText, own), true, recipient.GetIdentity());
         }
     }
 
@@ -351,6 +378,7 @@ class FENR_PDA_Groups
             return false;
         }
 
+        groupName = groupName.Trim();
         if (groupName == "" || groupName.LengthUtf8() > FENR_PDA_Limits.GROUP_NAME)
         {
             resultText = "Group name must be 1-32 characters.";
@@ -371,7 +399,8 @@ class FENR_PDA_Groups
         group.OwnerName = creator.GetName();
         group.Members.Insert(new FENR_PDA_GroupMember(creatorID, creator.GetName()));
         s_Groups.Insert(group);
-        SaveGroups();
+        s_ByID.Set(group.GroupID, group);
+        MarkGroupsDirty();
 
         AppendSystemMessage(group, creator.GetName() + " created the private channel.");
         FENR_PDA_Storage.LogSystem("GROUP_CREATE Group=" + group.GroupID + " Name=" + group.GroupName + " Owner=" + creator.GetName() + " OwnerID=" + creatorID);
@@ -399,6 +428,7 @@ class FENR_PDA_Groups
             return false;
         }
 
+        newName = newName.Trim();
         if (newName == "" || newName.LengthUtf8() > FENR_PDA_Limits.GROUP_NAME)
         {
             resultText = "Group name must be 1-32 characters.";
@@ -407,7 +437,7 @@ class FENR_PDA_Groups
 
         string oldName = group.GroupName;
         group.GroupName = newName;
-        SaveGroups();
+        MarkGroupsDirty();
         AppendSystemMessage(group, actor.GetName() + " renamed the channel from " + oldName + " to " + newName + ".");
         FENR_PDA_Storage.LogSystem("GROUP_RENAME Group=" + groupID + " Old=" + oldName + " New=" + newName + " Actor=" + actor.GetName());
         BroadcastRefresh(group);
@@ -432,33 +462,24 @@ class FENR_PDA_Groups
             return false;
         }
 
-        if (memberID == "" || FENR_PDA_ChannelIds.IsChannel(memberID))
+        if (memberID == "" || FENR_PDA_ChannelIds.IsChannel(memberID) || FENR_PDA_Server.IsRetiredID(memberID))
         {
             resultText = "Invalid PDA member.";
             return false;
         }
 
-        if (FENR_PDA_Server.IsTestAccount(memberID) && !FENR_PDA_Server.TestAccountsEnabled())
+        PlayerBase memberPlayer = FENR_PDA_Server.FindOnlinePlayer(memberID);
+        if (memberPlayer && memberPlayer.GetIdentity())
         {
-            resultText = "PDA test accounts are disabled.";
-            return false;
+            FENR_PDA_Storage.RememberIdentity(memberPlayer.GetIdentity());
+            memberID = memberPlayer.GetIdentity().GetPlainId();
+            memberName = memberPlayer.GetIdentity().GetName();
         }
-
-        if (!FENR_PDA_Server.IsTestAccount(memberID))
+        else
         {
-            PlayerBase memberPlayer = FENR_PDA_Server.FindOnlinePlayer(memberID);
-            if (memberPlayer && memberPlayer.GetIdentity())
-            {
-                FENR_PDA_Storage.RememberIdentity(memberPlayer.GetIdentity());
-                memberID = memberPlayer.GetIdentity().GetPlainId();
-                memberName = memberPlayer.GetIdentity().GetName();
-            }
-            else
-            {
-                string knownSteam64 = FENR_PDA_Storage.ResolveSteam64(memberID);
-                if (knownSteam64 != "")
-                    memberID = knownSteam64;
-            }
+            string knownSteam64 = FENR_PDA_Storage.ResolveSteam64(memberID);
+            if (knownSteam64 != "")
+                memberID = knownSteam64;
         }
 
         if (FindMemberIndexByID(group, memberID) >= 0)
@@ -474,10 +495,11 @@ class FENR_PDA_Groups
         }
 
         string resolvedName = ResolveMemberName(memberID, memberName);
-        if (!FENR_PDA_Server.IsTestAccount(memberID))
-            FENR_PDA_Storage.RememberContact(memberID, resolvedName);
+        if (resolvedName.LengthUtf8() > FENR_PDA_Limits.CONTACT_NAME)
+            resolvedName = resolvedName.SubstringUtf8(0, FENR_PDA_Limits.CONTACT_NAME);
+        FENR_PDA_Storage.RememberContact(memberID, resolvedName);
         group.Members.Insert(new FENR_PDA_GroupMember(memberID, resolvedName));
-        SaveGroups();
+        MarkGroupsDirty();
         AppendSystemMessage(group, actor.GetName() + " added " + resolvedName + ".");
         FENR_PDA_Storage.LogSystem("GROUP_ADD_MEMBER Group=" + groupID + " Actor=" + actor.GetName() + " Member=" + resolvedName + " MemberID=" + memberID);
         BroadcastRefresh(group);
@@ -517,7 +539,7 @@ class FENR_PDA_Groups
 
         string removedName = group.Members.Get(memberIndex).Name;
         group.Members.RemoveOrdered(memberIndex);
-        SaveGroups();
+        MarkGroupsDirty();
         AppendSystemMessage(group, actor.GetName() + " removed " + removedName + ".");
         FENR_PDA_Storage.LogSystem("GROUP_REMOVE_MEMBER Group=" + groupID + " Actor=" + actor.GetName() + " Member=" + removedName + " MemberID=" + memberID);
         BroadcastRefresh(group, memberID);
@@ -537,7 +559,8 @@ class FENR_PDA_Groups
         }
 
         string actorID = StoredMemberID(group, actor);
-        if (actorID == "")
+        int memberIndex = group.FindMemberIndex(actorID);
+        if (actorID == "" || memberIndex < 0)
         {
             resultText = "You are not a member of this group.";
             return false;
@@ -549,9 +572,8 @@ class FENR_PDA_Groups
             return false;
         }
 
-        int memberIndex = group.FindMemberIndex(actorID);
         group.Members.RemoveOrdered(memberIndex);
-        SaveGroups();
+        MarkGroupsDirty();
         AppendSystemMessage(group, actor.GetName() + " left the channel.");
         FENR_PDA_Storage.LogSystem("GROUP_LEAVE Group=" + groupID + " Member=" + actor.GetName() + " MemberID=" + actorID);
         BroadcastRefresh(group, actorID);
@@ -584,12 +606,13 @@ class FENR_PDA_Groups
         }
 
         string deletedName = group.GroupName;
+        s_ByID.Remove(groupID);
         s_Groups.RemoveItem(group);
-        SaveGroups();
+        MarkGroupsDirty();
 
         FENR_PDA_Storage.DeleteGroupHistory(groupID);
-        if (s_MessageCache.Contains(groupID))
-            s_MessageCache.Remove(groupID);
+        s_MessageCache.Remove(groupID);
+        s_DirtyHistory.Remove(groupID);
 
         FENR_PDA_Storage.LogSystem("GROUP_DELETE Group=" + groupID + " Name=" + deletedName + " Actor=" + actor.GetName());
         foreach (string notifyID : notifyIDs)
@@ -625,41 +648,19 @@ class FENR_PDA_Groups
         if (messageText.LengthUtf8() > FENR_PDA_Limits.GROUP_MESSAGE)
             messageText = messageText.SubstringUtf8(0, FENR_PDA_Limits.GROUP_MESSAGE);
 
-        AppendMessage(groupID, sender.GetPlainId(), sender.GetName(), messageText);
+        string senderID = sender.GetPlainId();
+        AppendMessage(groupID, senderID, sender.GetName(), messageText);
 
         ref FENR_PDA_MessageRecord groupRecord = new FENR_PDA_MessageRecord();
         groupRecord.Type = FENR_PDA_MessageType.GROUP;
-        groupRecord.SenderSteam64 = sender.GetPlainId();
+        groupRecord.SenderSteam64 = senderID;
         groupRecord.SenderName = sender.GetName();
         groupRecord.TargetID = groupID;
         groupRecord.TargetName = group.GroupName;
         groupRecord.Message = messageText;
         FENR_PDA_Messages.Record(groupRecord);
 
-        BroadcastIncoming(group, sender.GetName(), messageText);
-
-        if (FENR_PDA_Server.TestAccountsEnabled())
-        {
-            foreach (FENR_PDA_GroupMember testMember : group.Members)
-            {
-                if (!testMember || !FENR_PDA_Server.IsTestAccount(testMember.ID))
-                    continue;
-
-                string testName = FENR_PDA_Server.TestAccountName(testMember.ID);
-                AppendMessage(groupID, testMember.ID, testName, messageText);
-
-                ref FENR_PDA_MessageRecord testGroupRecord = new FENR_PDA_MessageRecord();
-                testGroupRecord.Type = FENR_PDA_MessageType.GROUP;
-                testGroupRecord.SenderSteam64 = testMember.ID;
-                testGroupRecord.SenderName = testName;
-                testGroupRecord.TargetID = groupID;
-                testGroupRecord.TargetName = group.GroupName;
-                testGroupRecord.Message = messageText;
-                FENR_PDA_Messages.Record(testGroupRecord);
-
-                BroadcastIncoming(group, testName, messageText);
-            }
-        }
+        BroadcastIncoming(group, senderID, sender.GetName(), messageText);
 
         resultText = "Message sent.";
         return true;

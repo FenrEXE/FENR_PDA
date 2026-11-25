@@ -43,7 +43,7 @@ class CfgMods
 		author="Fenr.EXE";
 		credits="Fenrir Industries";
 		authorID="";
-		version="8.7";
+		version="8.8";
 		extra=0;
 		type="mod";
 		inputs="FENR_PDA/PDA/data/inputs.xml";

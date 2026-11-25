@@ -696,6 +696,7 @@ class FENR_PDA_DriveService
                 info = "Intel drives are read-only.";
                 return false;
             }
+            DropDriveIntel(key);
             FENR_PDA_Storage.DeleteDrive(key);
             EnsureIndex();
             if (s_Written.Contains(key))
@@ -883,6 +884,8 @@ class FENR_PDA_DriveService
             info = "Enter an intel title and body.";
             return false;
         }
+        // The file this drive held before goes (custom files live on one drive).
+        DropDriveIntel(key);
         array<ref FENR_PDA_IntelFile> pool = FENR_PDA_Storage.LoadIntel();
         ref FENR_PDA_IntelFile file = new FENR_PDA_IntelFile();
         int now = GetGame().GetTime();
@@ -964,6 +967,17 @@ class FENR_PDA_DriveService
         }
         if (decay.Count() > 0 || expired.Count() > 0)
             SaveIndex();
+    }
+
+    // Drops the admin-written intel file a drive holds, if any.
+    protected static void DropDriveIntel(string key)
+    {
+        FENR_PDA_DriveData old = FENR_PDA_Storage.LoadDrive(key);
+        if (!old || old.IntelID == "")
+            return;
+        array<string> dead = new array<string>();
+        dead.Insert(old.IntelID);
+        DropCustomIntel(dead);
     }
 
     // Admin-written intel files (weight 0) are only on one drive each.

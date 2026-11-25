@@ -1,5 +1,4 @@
 {
-  "TestAccountsEnabled": true,
   "TradeEnabled": true,
   "TradeMaxListingsPerPlayer": 5,
   "TradeListingDays": 7,

@@ -77,7 +77,6 @@ class FENR_PDA_Rpc
     static const string ADD_CONTACT = "AddContact";
     static const string CHECK_CONTACTS = "CheckContacts";
     static const string SEND_MESSAGE = "SendMessage";
-    static const string SYNC_TEST_ACCOUNTS = "SyncTestAccounts";
     static const string NETWORK_STATUS = "NetworkStatus";
     static const string PDA_USAGE = "PdaUsage";
     static const string PDA_NOTICE = "PdaNotice";

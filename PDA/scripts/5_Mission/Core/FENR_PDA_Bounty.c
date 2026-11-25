@@ -17,7 +17,6 @@ class FENR_PDA_BountyBoard
 
     protected static ref array<ref FENR_PDA_Bounty> s_Bounties;
     protected static bool s_Initialized = false;
-    protected static int s_Counter = 0;
 
     static void Init()
     {
@@ -59,25 +58,6 @@ class FENR_PDA_BountyBoard
             SaveBoard();
     }
 
-    protected static string CleanText(string text, int maxChars)
-    {
-        string result = text;
-        result.Replace("\n", " ");
-        result.Replace("\r", " ");
-        result = result.Trim();
-        if (result.LengthUtf8() > maxChars)
-            result = result.SubstringUtf8(0, maxChars);
-        return result;
-    }
-
-    protected static string NewBountyID()
-    {
-        s_Counter++;
-        int now = GetGame().GetTime();
-        int salt = Math.RandomInt(1000, 9999);
-        return "B" + now.ToString() + "_" + s_Counter.ToString() + "_" + salt.ToString();
-    }
-
     protected static FENR_PDA_Bounty FindBounty(string bountyID)
     {
         EnsureLoaded();
@@ -116,14 +96,24 @@ class FENR_PDA_BountyBoard
 
     protected static void NotifyEveryone(string title, string body)
     {
-        ref array<Man> players = new array<Man>();
-        GetGame().GetPlayers(players);
-        foreach (Man man : players)
+        ref array<PlayerBase> holders = new array<PlayerBase>();
+        FENR_PDA_Sessions.LiveHolders(holders);
+        foreach (PlayerBase player : holders)
+            GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.BOUNTY_NOTIFY, new Param2<string, string>(title, body), true, player.GetIdentity());
+    }
+
+    protected static bool DropOldestCompleted()
+    {
+        for (int i = 0; i < s_Bounties.Count(); i++)
         {
-            PlayerBase player = PlayerBase.Cast(man);
-            if (player && player.GetIdentity() && FENR_PDA_Sessions.ActiveDevice(player))
-                GetRPCManager().SendRPC(FENR_PDA_RPC_NAMESPACE, FENR_PDA_Rpc.BOUNTY_NOTIFY, new Param2<string, string>(title, body), true, player.GetIdentity());
+            FENR_PDA_Bounty bounty = s_Bounties[i];
+            if (!bounty || bounty.Status == FENR_PDA_BountyStatus.COMPLETED)
+            {
+                s_Bounties.RemoveOrdered(i);
+                return true;
+            }
         }
+        return false;
     }
 
     static bool Post(PlayerIdentity sender, string targetName, string reward, string reason, bool serverBounty, out string info)
@@ -146,9 +136,9 @@ class FENR_PDA_BountyBoard
             return false;
         }
 
-        string target = CleanText(targetName, FENR_PDA_BountyLimits.TARGET);
-        string cleanReward = CleanText(reward, FENR_PDA_BountyLimits.REWARD);
-        string cleanReason = CleanText(reason, FENR_PDA_BountyLimits.REASON);
+        string target = FENR_PDA_Board.CleanText(targetName, FENR_PDA_BountyLimits.TARGET);
+        string cleanReward = FENR_PDA_Board.CleanText(reward, FENR_PDA_BountyLimits.REWARD);
+        string cleanReason = FENR_PDA_Board.CleanText(reason, FENR_PDA_BountyLimits.REASON);
         if (target == "")
         {
             info = "Enter the target's name.";
@@ -159,28 +149,32 @@ class FENR_PDA_BountyBoard
             info = "Enter a reward.";
             return false;
         }
-        if (target == sender.GetName())
+        string posterID = sender.GetPlainId();
+        // By name and by player (a rename does not get around it).
+        string targetID = FENR_PDA_Storage.ResolveSteam64(target, true);
+        if (target == sender.GetName() || targetID == posterID)
         {
             info = "You cannot place a bounty on yourself.";
             return false;
         }
 
-        string posterID = sender.GetPlainId();
         int maxBounties = FENR_PDA_Storage.BountyMaxPerPlayer();
         if (!serverBounty && ActiveCountFor(posterID) >= maxBounties)
         {
             info = "You already have " + maxBounties.ToString() + " active bounties.";
             return false;
         }
-        if (s_Bounties.Count() >= MAX_TOTAL)
+        // Completed bounties do not count: the oldest one makes room.
+        if (s_Bounties.Count() >= MAX_TOTAL && !DropOldestCompleted())
         {
             info = "The bounty board is full. Try again later.";
             return false;
         }
 
         ref FENR_PDA_Bounty bounty = new FENR_PDA_Bounty();
-        bounty.ID = NewBountyID();
+        bounty.ID = FENR_PDA_Board.NewID("B");
         bounty.TargetName = target;
+        bounty.TargetID = targetID;
         bounty.Reward = cleanReward;
         bounty.Reason = cleanReason;
         bounty.PosterID = posterID;
@@ -234,12 +228,17 @@ class FENR_PDA_BountyBoard
                 info = "This bounty is not open for claims.";
                 return false;
             }
-            if (bounty.TargetName == sender.GetName())
+            if (bounty.TargetName == sender.GetName() || (bounty.TargetID != "" && bounty.TargetID == senderID))
             {
                 info = "You cannot claim a bounty placed on yourself.";
                 return false;
             }
-            string cleanNote = CleanText(note, FENR_PDA_BountyLimits.NOTE);
+            if (bounty.RejectedID == senderID)
+            {
+                info = "Your claim on this bounty was rejected.";
+                return false;
+            }
+            string cleanNote = FENR_PDA_Board.CleanText(note, FENR_PDA_BountyLimits.NOTE);
             if (cleanNote == "")
             {
                 info = "Add a proof note for the poster (where, when, how).";
@@ -276,6 +275,8 @@ class FENR_PDA_BountyBoard
             else
             {
                 NotifyPlayer(bounty.ClaimerID, "BOUNTY CLAIM REJECTED", "Your claim on " + bounty.TargetName + " was rejected.");
+                // The same player cannot claim it again (no claim / reject loops).
+                bounty.RejectedID = bounty.ClaimerID;
                 bounty.Status = FENR_PDA_BountyStatus.OPEN;
                 bounty.ClaimerID = "";
                 bounty.ClaimerName = "";
@@ -346,26 +347,12 @@ class FENR_PDA_BountyBoard
         int pageSize = FENR_PDA_BountyLimits.PAGE_SIZE;
         if (board == FENR_PDA_BountyLimits.BOARD_MINE)
             pageSize = 50;
-        int maxPage = 0;
-        if (total > 0)
-            maxPage = (total - 1) / pageSize;
-        if (page > maxPage)
-            page = maxPage;
-        if (page < 0)
-            page = 0;
-        pageOut = page;
-
-        int start = page * pageSize;
-        int end = start + pageSize;
-        if (end > total)
-            end = total;
+        int start, end;
+        FENR_PDA_Board.PageSlice(total, page, pageSize, pageOut, start, end);
 
         for (int j = start; j < end; j++)
         {
             FENR_PDA_Bounty item = matches[j];
-            string posted = item.Created;
-            if (posted.Length() >= 16)
-                posted = posted.Substring(5, 11);
             string serverFlag = "0";
             if (item.IsServer)
                 serverFlag = "1";
@@ -380,7 +367,7 @@ class FENR_PDA_BountyBoard
             fields.Insert(item.ClaimerID);
             fields.Insert(item.ClaimerName);
             fields.Insert(item.ClaimNote);
-            fields.Insert(posted);
+            fields.Insert(FENR_PDA_Board.Posted(item.Created));
         }
         return fields;
     }

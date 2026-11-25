@@ -11,7 +11,6 @@ class FENR_PDA_Storage
 {
     static const string CONFIG_FILE = "$profile:\\PDA\\Config\\FenrirIndustriesPDA.json";
     static const string LEGACY_LOG_CONFIG_FILE = "$profile:\\PDA\\Config\\Logging.json";
-    static const string LEGACY_TEST_CONFIG_FILE = "$profile:\\PDA\\Config\\TestAccounts.json";
     static const string REGISTRY_FILE = "$profile:\\PDA\\Logs\\FENR_FileRegistry.json";
     static const string GROUPS_FILE = "$profile:\\PDA\\Groups\\Groups.json";
     static const string KNOWN_PLAYERS_FILE = "$profile:\\PDA\\KnownPlayers.json";
@@ -22,6 +21,7 @@ class FENR_PDA_Storage
 
     protected static ref FENR_PDA_Config s_Config;
     protected static ref FENR_PDA_LogRegistry s_Registry;
+    protected static ref map<string, bool> s_RegistryPaths;   // paths in s_Registry (fast lookup)
     protected static ref array<ref FENR_PDA_KnownPlayer> s_KnownPlayers;
     protected static ref map<string, FENR_PDA_KnownPlayer> s_KnownBySteam;
     protected static ref map<string, FENR_PDA_KnownPlayer> s_KnownByLegacy;
@@ -63,7 +63,7 @@ class FENR_PDA_Storage
         EnsureCurrentMessageFile();
         CleanupExpired();
 
-        int cleanupMs = s_Config.CleanupIntervalHours * 60 * 60 * 1000;
+        int cleanupMs = Cfg().CleanupIntervalHours * 60 * 60 * 1000;
         if (cleanupMs < 3600000)
             cleanupMs = 3600000;
 
@@ -112,6 +112,14 @@ class FENR_PDA_Storage
         }
 
         return (365 * year) + (year / 4) - (year / 100) + (year / 400) + ((153 * (month - 3) + 2) / 5) + day - 1;
+    }
+
+    // The server's map (marker sets are filed under it).
+    static string WorldName()
+    {
+        string world;
+        GetGame().GetWorldName(world);
+        return world;
     }
 
     static int TodaySerial()
@@ -281,11 +289,15 @@ class FENR_PDA_Storage
         if (!allowName)
             return "";
 
+        // Names are not unique: the most recently seen player with it.
+        FENR_PDA_KnownPlayer best = null;
         foreach (FENR_PDA_KnownPlayer candidate : s_KnownPlayers)
         {
-            if (candidate && candidate.Name == lookup)
-                return candidate.Steam64;
+            if (candidate && candidate.Name == lookup && candidate.Steam64 != "" && (!best || candidate.LastSeen > best.LastSeen))
+                best = candidate;
         }
+        if (best)
+            return best.Steam64;
         return "";
     }
 
@@ -370,27 +382,21 @@ class FENR_PDA_Storage
     // ---------------------------------------------------------------------
     static bool BatteryDrainEnabled()
     {
-        if (!s_Config)
-            LoadConfig();
-        return s_Config && s_Config.BatteryDrainEnabled;
+        return Cfg().BatteryDrainEnabled;
     }
 
     static float BatteryDrainOpenPerMinute()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.BatteryDrainOpenPercentPerMinute < 0)
+        if (Cfg().BatteryDrainOpenPercentPerMinute < 0)
             return 0;
-        return s_Config.BatteryDrainOpenPercentPerMinute;
+        return Cfg().BatteryDrainOpenPercentPerMinute;
     }
 
     static float BatteryDrainMapPerMinute()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.BatteryDrainMapPercentPerMinute < 0)
+        if (Cfg().BatteryDrainMapPercentPerMinute < 0)
             return 0;
-        return s_Config.BatteryDrainMapPercentPerMinute;
+        return Cfg().BatteryDrainMapPercentPerMinute;
     }
 
     // Legacy client map markers (one file per terrain, pre-7.8)
@@ -451,27 +457,21 @@ class FENR_PDA_Storage
 
     static bool BountyEnabled()
     {
-        if (!s_Config)
-            LoadConfig();
-        return s_Config && s_Config.BountyEnabled;
+        return Cfg().BountyEnabled;
     }
 
     static int BountyMaxPerPlayer()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.BountyMaxPerPlayer < 1)
+        if (Cfg().BountyMaxPerPlayer < 1)
             return 3;
-        return s_Config.BountyMaxPerPlayer;
+        return Cfg().BountyMaxPerPlayer;
     }
 
     static int BountyDays()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.BountyDays < 1)
+        if (Cfg().BountyDays < 1)
             return 7;
-        return s_Config.BountyDays;
+        return Cfg().BountyDays;
     }
 
     // ---------------------------------------------------------------------
@@ -549,40 +549,28 @@ class FENR_PDA_Storage
 
     static int DeviceInactiveDays()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.DeviceInactiveDays < 0)
+        if (Cfg().DeviceInactiveDays < 0)
             return 0;
-        return s_Config.DeviceInactiveDays;
+        return Cfg().DeviceInactiveDays;
     }
 
     static int EncryptedDriveDays()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.EncryptedDriveDays < 1)
+        if (Cfg().EncryptedDriveDays < 1)
             return 7;
-        return s_Config.EncryptedDriveDays;
+        return Cfg().EncryptedDriveDays;
     }
 
 
     // Login session length players can pick (1-24 hours).
     static int SessionMinHours()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config)
-            return 1;
-        return Math.Clamp(s_Config.SessionMinHours, 1, 24);
+        return Math.Clamp(Cfg().SessionMinHours, 1, 24);
     }
 
     static int SessionMaxHours()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config)
-            return 4;
-        int maxHours = Math.Clamp(s_Config.SessionMaxHours, 1, 24);
+        int maxHours = Math.Clamp(Cfg().SessionMaxHours, 1, 24);
         if (maxHours < SessionMinHours())
             maxHours = SessionMinHours();
         return maxHours;
@@ -592,20 +580,16 @@ class FENR_PDA_Storage
     // tinted ("1"/"0"), banner.
     static ref array<string> BrandFields()
     {
-        if (!s_Config)
-            LoadConfig();
         ref array<string> fields = new array<string>();
-        if (!s_Config)
-            return fields;
-        fields.Insert(BrandText(s_Config.BrandName, 40));
-        fields.Insert(BrandText(s_Config.BrandTagline, 48));
-        fields.Insert(BrandText(s_Config.BrandNetwork, 40));
-        fields.Insert(BrandText(s_Config.BrandLogo, 255));
-        if (s_Config.BrandLogoTinted)
+        fields.Insert(BrandText(Cfg().BrandName, 40));
+        fields.Insert(BrandText(Cfg().BrandTagline, 48));
+        fields.Insert(BrandText(Cfg().BrandNetwork, 40));
+        fields.Insert(BrandText(Cfg().BrandLogo, 255));
+        if (Cfg().BrandLogoTinted)
             fields.Insert("1");
         else
             fields.Insert("0");
-        fields.Insert(BrandText(s_Config.BrandBanner, 255));
+        fields.Insert(BrandText(Cfg().BrandBanner, 255));
         return fields;
     }
 
@@ -619,66 +603,50 @@ class FENR_PDA_Storage
 
     static bool SosEnabled()
     {
-        if (!s_Config)
-            LoadConfig();
-        return s_Config && s_Config.SosEnabled;
+        return Cfg().SosEnabled;
     }
 
     static int SosMaxContacts()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.SosMaxContacts < 1)
+        if (Cfg().SosMaxContacts < 1)
             return 5;
-        if (s_Config.SosMaxContacts > 20)
+        if (Cfg().SosMaxContacts > 20)
             return 20;
-        return s_Config.SosMaxContacts;
+        return Cfg().SosMaxContacts;
     }
 
     static int SosPingMinutes()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.SosPingMinutes < 1)
+        if (Cfg().SosPingMinutes < 1)
             return 30;
-        return s_Config.SosPingMinutes;
+        return Cfg().SosPingMinutes;
     }
 
     // How far back PDA message history is rebuilt from the log.
     static int MessageHistoryDays()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config)
-            return 30;
-        if (s_Config.MessageLogsDays <= 0)
+        if (Cfg().MessageLogsDays <= 0)
             return 90;   // logs kept forever: rebuild the last 90 days
-        return s_Config.MessageLogsDays;
+        return Cfg().MessageLogsDays;
     }
 
     static bool TradeEnabled()
     {
-        if (!s_Config)
-            LoadConfig();
-        return s_Config && s_Config.TradeEnabled;
+        return Cfg().TradeEnabled;
     }
 
     static int TradeMaxListings()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.TradeMaxListingsPerPlayer < 1)
+        if (Cfg().TradeMaxListingsPerPlayer < 1)
             return 5;
-        return s_Config.TradeMaxListingsPerPlayer;
+        return Cfg().TradeMaxListingsPerPlayer;
     }
 
     static int TradeListingDays()
     {
-        if (!s_Config)
-            LoadConfig();
-        if (!s_Config || s_Config.TradeListingDays < 1)
+        if (Cfg().TradeListingDays < 1)
             return 7;
-        return s_Config.TradeListingDays;
+        return Cfg().TradeListingDays;
     }
 
     static string GroupHistoryPath(string groupID)
@@ -730,6 +698,14 @@ class FENR_PDA_Storage
         s_Config.ConfigVersion = CONFIG_VERSION;
     }
 
+    // Server configuration (loaded on first use).
+    static FENR_PDA_Config Cfg()
+    {
+        if (!s_Config)
+            LoadConfig();
+        return s_Config;
+    }
+
     protected static void LoadConfig()
     {
         s_Config = new FENR_PDA_Config();
@@ -769,23 +745,10 @@ class FENR_PDA_Storage
             }
         }
 
-        if (FileExist(LEGACY_TEST_CONFIG_FILE))
-        {
-            ref FENR_PDA_LegacyTestConfig legacyTest = new FENR_PDA_LegacyTestConfig();
-            JsonFileLoader<ref FENR_PDA_LegacyTestConfig>.JsonLoadFile(LEGACY_TEST_CONFIG_FILE, legacyTest);
-            if (legacyTest)
-                s_Config.TestAccountsEnabled = legacyTest.Enabled;
-        }
 
         JsonFileLoader<ref FENR_PDA_Config>.JsonSaveFile(CONFIG_FILE, s_Config);
     }
 
-    static bool TestAccountsEnabled()
-    {
-        if (!s_Config)
-            LoadConfig();
-        return s_Config && s_Config.TestAccountsEnabled;
-    }
 
     protected static void LoadRegistry()
     {
@@ -797,6 +760,19 @@ class FENR_PDA_Storage
 
         if (!s_Registry)
             s_Registry = new FENR_PDA_LogRegistry();
+        if (!s_Registry.Files)
+            s_Registry.Files = new array<ref FENR_PDA_LogFileRecord>();
+        RebuildRegistryIndex();
+    }
+
+    protected static void RebuildRegistryIndex()
+    {
+        s_RegistryPaths = new map<string, bool>();
+        foreach (FENR_PDA_LogFileRecord record : s_Registry.Files)
+        {
+            if (record)
+                s_RegistryPaths.Set(record.Path, true);
+        }
     }
 
     protected static void SaveRegistry()
@@ -809,28 +785,23 @@ class FENR_PDA_Storage
     protected static void RegisterFile(string path, string category, int daySerial)
     {
         if (!s_Registry)
-            s_Registry = new FENR_PDA_LogRegistry();
-
-        foreach (FENR_PDA_LogFileRecord record : s_Registry.Files)
-        {
-            if (record && record.Path == path)
-                return;
-        }
+            LoadRegistry();
+        if (s_RegistryPaths.Contains(path))
+            return;
 
         s_Registry.Files.Insert(new FENR_PDA_LogFileRecord(path, category, daySerial));
+        s_RegistryPaths.Set(path, true);
         SaveRegistry();
     }
 
     protected static int RetentionFor(string category)
     {
-        if (!s_Config)
-            LoadConfig();
 
-        if (category == "MESSAGE") return s_Config.MessageLogsDays;
-        if (category == "ADMIN") return s_Config.AdminLogsDays;
-        if (category == "ERROR") return s_Config.ErrorLogsDays;
-        if (category == "DRIVE") return s_Config.DriveLogsDays;
-        return s_Config.SystemLogsDays;
+        if (category == "MESSAGE") return Cfg().MessageLogsDays;
+        if (category == "ADMIN") return Cfg().AdminLogsDays;
+        if (category == "ERROR") return Cfg().ErrorLogsDays;
+        if (category == "DRIVE") return Cfg().DriveLogsDays;
+        return Cfg().SystemLogsDays;
     }
 
     protected static void AppendTextLog(string category, string message)
@@ -839,7 +810,7 @@ class FENR_PDA_Storage
             return;
         if (!s_ServerInitialized)
             InitServer();
-        if (!s_Config || !s_Config.LoggingEnabled)
+        if (!Cfg().LoggingEnabled)
             return;
 
         string path = FENR_PDA_Paths.LOG_ROOT + category + "_" + DayStamp() + ".log";
@@ -1027,6 +998,15 @@ class FENR_PDA_Storage
         return false;
     }
 
+    // The last search's matches, newest first, so paging through results
+    // does not re-read the log.  Kept SEARCH_CACHE_MS.
+    static const int SEARCH_CACHE_MS = 60000;
+    static const int SEARCH_CACHE_MAX = 5000;
+    protected static string s_SearchKey = "";
+    protected static int s_SearchTime;
+    protected static int s_SearchTotal;
+    protected static ref array<ref FENR_PDA_MessageRecord> s_SearchMatches;
+
     static ref array<ref FENR_PDA_MessageRecord> SearchMessages(FENR_PDA_MessageSearch filter, int offset, int limit, out int totalMatches)
     {
         ref array<ref FENR_PDA_MessageRecord> results = new array<ref FENR_PDA_MessageRecord>();
@@ -1044,38 +1024,56 @@ class FENR_PDA_Storage
         if (limit > 100) limit = 100;
         if (offset < 0) offset = 0;
 
-        // Newest files and newest messages first: the viewer opens on current activity.
-        for (int r = s_Registry.Files.Count() - 1; r >= 0; r--)
-        {
-            FENR_PDA_LogFileRecord file = s_Registry.Files[r];
-            if (!file || file.Category != "MESSAGE")
-                continue;
-            if (file.Path.IndexOf(FENR_PDA_Paths.MESSAGE_LOG_ROOT) != 0)
-                continue;
-            if (!FileExist(file.Path))
-                continue;
+        string key = searchFilter.Type + "|" + searchFilter.Query;
+        int now = GetGame().GetTime();
+        bool cached = s_SearchMatches && s_SearchKey == key && now - s_SearchTime < SEARCH_CACHE_MS;
+        // A page past the cached matches (very large result sets) needs a full scan.
+        if (cached && offset + limit > s_SearchMatches.Count() && s_SearchMatches.Count() < s_SearchTotal)
+            cached = false;
 
-            ref array<ref FENR_PDA_MessageRecord> entries = LoadMessageFile(file.Path);
-            for (int i = entries.Count() - 1; i >= 0; i--)
+        if (!cached)
+        {
+            s_SearchKey = key;
+            s_SearchTime = now;
+            s_SearchTotal = 0;
+            s_SearchMatches = new array<ref FENR_PDA_MessageRecord>();
+            int keep = SEARCH_CACHE_MAX;
+            if (offset + limit > keep)
+                keep = offset + limit;
+
+            // Newest files and newest messages first: the viewer opens on current activity.
+            for (int r = s_Registry.Files.Count() - 1; r >= 0; r--)
             {
-                FENR_PDA_MessageRecord entry = entries[i];
-                if (!MessageMatches(entry, searchFilter))
+                FENR_PDA_LogFileRecord file = s_Registry.Files[r];
+                if (!file || file.Category != "MESSAGE")
+                    continue;
+                if (file.Path.IndexOf(FENR_PDA_Paths.MESSAGE_LOG_ROOT) != 0)
+                    continue;
+                if (!FileExist(file.Path))
                     continue;
 
-                if (totalMatches >= offset && results.Count() < limit)
-                    results.Insert(entry);
-                totalMatches++;
+                ref array<ref FENR_PDA_MessageRecord> entries = LoadMessageFile(file.Path);
+                for (int i = entries.Count() - 1; i >= 0; i--)
+                {
+                    FENR_PDA_MessageRecord entry = entries[i];
+                    if (!MessageMatches(entry, searchFilter))
+                        continue;
+                    if (s_SearchMatches.Count() < keep)
+                        s_SearchMatches.Insert(entry);
+                    s_SearchTotal++;
+                }
             }
         }
 
+        totalMatches = s_SearchTotal;
+        for (int m = offset; m < s_SearchMatches.Count() && results.Count() < limit; m++)
+            results.Insert(s_SearchMatches[m]);
         return results;
     }
 
     static int SearchPageSize()
     {
-        if (!s_Config)
-            LoadConfig();
-        int value = s_Config.SearchResultsPerPage;
+        int value = Cfg().SearchResultsPerPage;
         if (value < 10) value = 10;
         if (value > 50) value = 50;
         return value;
@@ -1083,17 +1081,13 @@ class FENR_PDA_Storage
 
     static string RetentionSummary()
     {
-        if (!s_Config)
-            LoadConfig();
-        return "Messages: " + s_Config.MessageLogsDays.ToString() + "d | Admin: " + s_Config.AdminLogsDays.ToString() + "d | System: " + s_Config.SystemLogsDays.ToString() + "d";
+        return "Messages: " + Cfg().MessageLogsDays.ToString() + "d | Admin: " + Cfg().AdminLogsDays.ToString() + "d | System: " + Cfg().SystemLogsDays.ToString() + "d";
     }
 
     static void CleanupExpired()
     {
         if (!GetGame().IsServer())
             return;
-        if (!s_Config)
-            LoadConfig();
         if (!s_Registry)
             LoadRegistry();
 
@@ -1124,7 +1118,11 @@ class FENR_PDA_Storage
         }
 
         if (changed)
+        {
+            RebuildRegistryIndex();
             SaveRegistry();
+        }
+        s_SearchMatches = null;
 
         // PDA memory, players and encrypted drives that have gone stale.
         int inactiveDays = DeviceInactiveDays();
