@@ -325,7 +325,7 @@ def build():
     sb = frame("FI_Sidebar", (14, 8, 236, 538), ignorepointer=1)
     sb.add(box_panel("FI_SidebarPane", (14, 8, 236, 538), "panel", "lineDim"))
     sb.add(text("FI_Unit", (56, 19, 170, 17), "FI-PDA-01", "text", FONT_M))
-    sb.add(text("FI_Version", (56, 39, 120, 15), "FIELD OS v8.6", "textDim", FONT_S))
+    sb.add(text("FI_Version", (56, 39, 120, 15), "FIELD OS v8.7", "textDim", FONT_S))
     sb.add(button("FI_SosQuick", (154, 18, 36, 38), "SOS", None, 12))
     cb = (196, 18, 40, 38)
     cl = frame("FI_Close_Box", cb)
@@ -1137,7 +1137,7 @@ def build():
     lg.add(image("FI_LOGIN_BG", (0, 0, DW, DH), "ui_bezel", "lcd"))   # rounded, like the bezel
     lg.add(border("FI_LOGIN_Frame", (14, 8, DW - 28, DH - 16), "lineDim", 2))
     brand_block(lg, "FI_LOGIN_", (DW - 435) / 2, 20)
-    lg.add(text("FI_LOGIN_Os", (14, 92, DW - 28, 15), "FIELD OS v8.6  //  SECURE ACCESS TERMINAL", "textDim", FONT_S, "center"))
+    lg.add(text("FI_LOGIN_Os", (14, 92, DW - 28, 15), "FIELD OS v8.7  //  SECURE ACCESS TERMINAL", "textDim", FONT_S, "center"))
     cw_, ch_ = 540, 404
     cx_, cy_ = (DW - cw_) / 2, 118
     lg.add(box_panel("FI_LOGIN_Card", (cx_, cy_, cw_, ch_), "panel", "line"))

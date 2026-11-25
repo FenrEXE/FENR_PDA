@@ -1,4 +1,4 @@
-# Fenrir Industries PDA — Server Owner Guide (v8.6)
+# Fenrir Industries PDA — Server Owner Guide (v8.7)
 
 ## New items
 
@@ -7,7 +7,9 @@
 | `FENR_PDA_IntelDrive` | Lore / intel files (admin-defined) | Intel Drive |
 | `FENR_PDA_EncryptedDrive` | Write-once data drive: saved conversations, group chats and marker sets that others can read | Encrypted Drive |
 
-Both use the existing flash drive model. The PDA now has a slot for each type, alongside the battery and the original flash drive slot.
+Both use the same drive model. The PDA has one slot for each type, plus the battery slot.
+
+> **v8.7:** the old plain Flash Drive (`FENR_PDA_FlashDrive`) and its PDA slot are gone. Remove it from your `types.xml`; any already in the world are deleted on the next restart.
 
 ### types.xml (example — tune to taste)
 

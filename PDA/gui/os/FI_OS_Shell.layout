@@ -51,7 +51,7 @@ FrameWidgetClass FI_OS_Root {
          position 0.17797 0.02045 size 0.72034 0.0316 text "FI-PDA-01" font "gui/fonts/metronlight16" color 0.58824 0.92549 0.72549 1 ignorepointer 1 "text halign" left "text valign" center
         }
         TextWidgetClass FI_Version {
-         position 0.17797 0.05762 size 0.50847 0.02788 text "FIELD OS v8.6" font "gui/fonts/Metron14" color 0.36078 0.71373 0.51765 1 ignorepointer 1 "text halign" left "text valign" center
+         position 0.17797 0.05762 size 0.50847 0.02788 text "FIELD OS v8.7" font "gui/fonts/Metron14" color 0.36078 0.71373 0.51765 1 ignorepointer 1 "text halign" left "text valign" center
         }
         FrameWidgetClass FI_SosQuick_Box {
          position 0.59322 0.01859 size 0.15254 0.07063
@@ -17808,7 +17808,7 @@ FrameWidgetClass FI_OS_Root {
          visible 0 position 0.29616 0.0361 size 0.40769 0.12274 image0 "FENR_PDA/PDA/gui/os/textures/brand.edds" mode blend color 0.31373 0.86275 0.58824 1 stretch 1 ignorepointer 1 "src alpha" 1 "no wrap" 1
         }
         TextWidgetClass FI_LOGIN_Os {
-         position 0.01312 0.16606 size 0.97376 0.02708 text "FIELD OS v8.6  //  SECURE ACCESS TERMINAL" font "gui/fonts/Metron14" color 0.36078 0.71373 0.51765 1 ignorepointer 1 "text halign" center "text valign" center
+         position 0.01312 0.16606 size 0.97376 0.02708 text "FIELD OS v8.7  //  SECURE ACCESS TERMINAL" font "gui/fonts/Metron14" color 0.36078 0.71373 0.51765 1 ignorepointer 1 "text halign" center "text valign" center
         }
         FrameWidgetClass FI_LOGIN_Card {
          position 0.24695 0.213 size 0.50609 0.72924 ignorepointer 1

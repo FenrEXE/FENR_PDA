@@ -6,7 +6,7 @@
 
 **A full in-game PDA for DayZ: secure messaging, private group channels, a live compass HUD, S.O.S beacons, trade and bounty boards, data drives and a VPP-backed admin console — all inside a weathered field terminal.**
 
-![Version](https://img.shields.io/badge/version-8.6-50dc96?style=for-the-badge&labelColor=0a1a12)
+![Version](https://img.shields.io/badge/version-8.7-50dc96?style=for-the-badge&labelColor=0a1a12)
 ![Game](https://img.shields.io/badge/game-DayZ-50dc96?style=for-the-badge&labelColor=0a1a12)
 ![Requires CF](https://img.shields.io/badge/requires-Community%20Framework-50dc96?style=for-the-badge&labelColor=0a1a12)
 ![Requires VPP](https://img.shields.io/badge/requires-VPP%20Admin%20Tools-50dc96?style=for-the-badge&labelColor=0a1a12)
@@ -107,8 +107,7 @@
 
    | Class | Item |
    |---|---|
-   | `FENR_PDA_Device` | The PDA (takes a 9V battery and three drive slots) |
-   | `FENR_PDA_FlashDrive` | Flash drive |
+   | `FENR_PDA_Device` | The PDA (takes a 9V battery, an Intel Drive and an Encrypted Drive) |
    | `FENR_PDA_IntelDrive` | Intel Drive |
    | `FENR_PDA_EncryptedDrive` | Encrypted Drive |
 
@@ -190,7 +189,7 @@ The UI layouts and textures are generated. To change them, edit the scripts in [
 
 ## 📜 Changelog
 
-See **[CHANGELOG.md](CHANGELOG.md)**. Latest: **v8.6** — new `FENR_PDA\PDA` prefix, marker-dot compass fixes and cleanup.
+See **[CHANGELOG.md](CHANGELOG.md)**. Latest: **v8.7** — the old Flash Drive item and its PDA slot are removed.
 
 ---
 

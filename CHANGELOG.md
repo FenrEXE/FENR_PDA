@@ -4,6 +4,19 @@ All notable changes to **Fenrir Industries PDA**, from v8.1 onward.
 
 ---
 
+## v8.7 — Flash Drive removed
+
+### Removed
+- The plain **Flash Drive** item (`FENR_PDA_FlashDrive`) and its slot on the PDA. It is replaced by the Intel and Encrypted drives.
+- The PDA now takes a 9V battery, an Intel Drive and an Encrypted Drive.
+
+### Changed
+- The Intel and Encrypted drives inherit from a new hidden base class, `FENR_PDA_DriveBase`, instead of the Flash Drive. Their model, damage textures, size and weight are unchanged.
+
+> **Server owners:** remove `FENR_PDA_FlashDrive` from your `types.xml`. Flash drives already in the world or in storage are deleted on the next restart, because the item no longer exists. Intel and Encrypted drives are not affected.
+
+---
+
 ## v8.6 — New mod folder and prefix
 
 ### Changed

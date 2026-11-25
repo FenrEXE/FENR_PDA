@@ -15,7 +15,6 @@ class CfgPatches
 	{
 		units[]=
 		{
-			"FENR_PDA_FlashDrive",
 			"FENR_PDA_IntelDrive",
 			"FENR_PDA_EncryptedDrive",
 			"FENR_PDA_Device"
@@ -44,7 +43,7 @@ class CfgMods
 		author="Fenr.EXE";
 		credits="Fenrir Industries";
 		authorID="";
-		version="8.6";
+		version="8.7";
 		extra=0;
 		type="mod";
 		inputs="FENR_PDA/PDA/data/inputs.xml";
@@ -81,19 +80,17 @@ class CfgMods
 class CfgVehicles
 {
 	class Inventory_Base;
-	class FENR_PDA_FlashDrive: Inventory_Base
+	// Shared base for the PDA drives (not spawnable).  v8.7: the plain flash
+	// drive item and its PDA slot were removed; its model stays as the body
+	// of the Intel and Encrypted drives.
+	class FENR_PDA_DriveBase: Inventory_Base
 	{
-		scope=2;
-		title="#pda_flashdrive_name";
-		displayName="#pda_flashdrive_name";
-		descriptionShort="#pda_flashdrive_desc";
+		scope=0;
+		displayName="Data Drive";
+		descriptionShort="A Fenrir Industries data drive.";
 		model="FENR_PDA\PDA\data\flashdrive.p3d";
 		itemSize[]={1,1};
 		weight=250;
-		inventorySlot[]=
-		{
-			"FENR_PDAFlashDrive"
-		};
 		class DamageSystem
 		{
 			class GlobalHealth
@@ -148,9 +145,9 @@ class CfgVehicles
 			};
 		};
 	};
-	// Purpose-built drives.  They share the flash drive model and have their
-	// own PDA slots so a PDA can carry one of each.
-	class FENR_PDA_IntelDrive: FENR_PDA_FlashDrive
+	// The two drive types.  Each has its own PDA slot, so a PDA can carry
+	// one of each.
+	class FENR_PDA_IntelDrive: FENR_PDA_DriveBase
 	{
 		scope=2;
 		title="Intel Drive";
@@ -161,7 +158,7 @@ class CfgVehicles
 			"FENR_PDAIntelDrive"
 		};
 	};
-	class FENR_PDA_EncryptedDrive: FENR_PDA_FlashDrive
+	class FENR_PDA_EncryptedDrive: FENR_PDA_DriveBase
 	{
 		scope=2;
 		title="Encrypted Drive";
@@ -188,7 +185,6 @@ class CfgVehicles
 		attachments[]=
 		{
 			"BatteryD",
-			"FENR_PDAFlashDrive",
 			"FENR_PDAIntelDrive",
 			"FENR_PDAEncryptedDrive"
 		};
@@ -258,12 +254,6 @@ class CfgVehicles
 };
 class CfgSlots
 {
-	class Slot_FENR_PDAFlashDrive
-	{
-		name="FENR_PDAFlashDrive";
-		displayName="FENR_PDAFlashDrive";
-		ghostIcon="default";
-	};
 	class Slot_FENR_PDAIntelDrive
 	{
 		name="FENR_PDAIntelDrive";
